@@ -50,7 +50,7 @@ class ResolverCandidate(object):
     def __repr__(self):
         return '%s - %s - %s' % (self.func, self.args, self.kwargs)
 
-class ResolverIterator(list):
+class ResolverIterator(object):
     def __init__(self, resolver):
         self.resolver = resolver
         self.__in_iteration = False
@@ -58,30 +58,30 @@ class ResolverIterator(list):
     def __iter__(self):
         return self
 
-    def next(self, nop=False):
-        if nop:
+    def next(self, peek=False):
+        # If this is the first time accessing our iterator, or we have
+        # already started iteration, fetch and store the next candidate,
+        # or we want to keep in on the current candidate
+        if not hasattr(self, '_candidate') or (self.__in_iteration and not peek):
             self._candidate = ResolverCandidate(*self.resolver.next())
-        else:
-            if self.__in_iteration:
-                self._candidate = ResolverCandidate(*self.resolver.next())
-            elif not hasattr(self, '_candidate'):
-                self._candidate = ResolverCandidate(*self.resolver.next())
-                self.__in_iteration = True
-            else:
-                self.__in_iteration = True
+
+        # Functions like __nonzero__ should not trigger the start of
+        # iteration over the resolver generator. They need to know
+        # if the generator is empty or not, but their peeking should not
+        # remove an item from the generator for those that attempt to
+        # iterate over the generator at a later point.
+        if not peek:
+            self.__in_iteration = True
         return self._candidate
 
     def __get_candidate(self):
-        if not hasattr(self, '_candidate'):
-            self.next()
-        return self._candidate
-
+        return self.next(peek=True)
     candidate = property(__get_candidate)
 
 class ResolverCandidates(object):
-    def __init__(self, resolver, list):
+    def __init__(self, resolver, backtracking=False):
         self.iterator = ResolverIterator(resolver)
-        self.list = list
+        self.backtracking = backtracking
 
     def __getitem__(self, index):
         return self.iterator.candidate[index]
@@ -90,7 +90,7 @@ class ResolverCandidates(object):
         return self
 
     def next(self):
-        if not self.list:
+        if not self.backtracking:
             for item in self.iterator.candidate:
                 return item
         else:
@@ -98,7 +98,7 @@ class ResolverCandidates(object):
 
     def __nonzero__(self):
         try:
-            self.iterator.next(nop=True)
+            self.iterator.next(peek=True)
         except Resolver404:
             return False
         return True
@@ -179,7 +179,7 @@ class RegexURLPattern(object):
             return
         self._callback_str = prefix + '.' + self._callback_str
 
-    def resolve(self, path, list=False):
+    def resolve(self, path, backtracking=False):
         match = self.regex.search(path)
         if match:
             # If there are any named groups, use those as kwargs, ignoring
@@ -193,12 +193,12 @@ class RegexURLPattern(object):
             # In both cases, pass any extra_kwargs as **kwargs.
             kwargs.update(self.default_args)
 
-            if list:
+            if backtracking:
                 return [ [ self.callback, args, kwargs ] ]
             else:
                 return self.callback, args, kwargs
 
-        if list:
+        if backtracking:
             return []
 
     def _get_callback(self):
@@ -285,8 +285,8 @@ class RegexURLResolver(object):
         return self._app_dict
     app_dict = property(_get_app_dict)
 
-    def resolve(self, path, list=False):
-        return ResolverCandidates(self._bare_resolve(path), list=list)
+    def resolve(self, path, backtracking=False):
+        return ResolverCandidates(self._bare_resolve(path), backtracking=backtracking)
 
     def _bare_resolve(self, path):
         tried = []
@@ -295,7 +295,7 @@ class RegexURLResolver(object):
             new_path = path[match.end():]
             for pattern in self.url_patterns:
                 try:
-                    sub_matches = pattern.resolve(new_path, list=True)
+                    sub_matches = pattern.resolve(new_path, backtracking=True)
                 except Resolver404, e:
                     sub_tried = e.args[0].get('tried')
                     if sub_tried is not None:
@@ -378,10 +378,10 @@ class RegexURLResolver(object):
         raise NoReverseMatch("Reverse for '%s' with arguments '%s' and keyword "
                 "arguments '%s' not found." % (lookup_view_s, args, kwargs))
 
-def resolve(path, urlconf=None, list=False):
+def resolve(path, urlconf=None, backtracking=False):
     if urlconf is None:
         urlconf = get_urlconf()
-    return get_resolver(urlconf).resolve(path, list=list)
+    return get_resolver(urlconf).resolve(path, backtracking=backtracking)
 
 def reverse(viewname, urlconf=None, args=None, kwargs=None, prefix=None, current_app=None):
     if urlconf is None:
