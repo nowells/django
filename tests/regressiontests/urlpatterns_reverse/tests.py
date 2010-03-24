@@ -118,7 +118,9 @@ class URLPatternReverse(TestCase):
             else:
                 self.assertEquals(got, expected)
 
-class ResolverTests(unittest.TestCase):
+class ResolverTests(TestCase):
+    urls = 'regressiontests.urlpatterns_reverse.urls'
+    
     def test_non_regex(self):
         """
         Verifies that we raise a Resolver404 if what we are resolving doesn't
@@ -132,6 +134,9 @@ class ResolverTests(unittest.TestCase):
         self.assertRaises(Resolver404, resolve, 'a')
         self.assertRaises(Resolver404, resolve, '\\')
         self.assertRaises(Resolver404, resolve, '.')
+        
+    def test_successful_resolve(self):
+        self.assertEqual(resolve('/places/3/')[0].__name__, 'empty_view')
 
 class ReverseShortcutTests(TestCase):
     urls = 'regressiontests.urlpatterns_reverse.urls'

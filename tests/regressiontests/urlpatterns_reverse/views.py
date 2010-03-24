@@ -1,3 +1,5 @@
+from django.core.urlresolvers import Resolver404
+
 def empty_view(request, *args, **kwargs):
     pass
 
@@ -6,3 +8,6 @@ def kwargs_view(request, arg1=1, arg2=2):
 
 def absolute_kwargs_view(request, arg1=1, arg2=2):
     pass
+
+def resolver_404_view(request, *args, **kwargs):
+    raise Resolver404
