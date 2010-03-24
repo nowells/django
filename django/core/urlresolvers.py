@@ -36,6 +36,73 @@ _prefixes = {}
 # Overridden URLconfs for each thread are stored here.
 _urlconfs = {}
 
+class ResolverCandidate(object):
+    def __init__(self, func, args, kwargs, app_name=None, namespace=None):
+        self.func = func
+        self.args = args
+        self.kwargs = kwargs
+        self.app_name = app_name
+        self.namespace = namespace
+
+    def __getitem__(self, index):
+        return (self.func, self.args, self.kwargs)[index]
+
+    def __repr__(self):
+        return '%s - %s - %s' % (self.func, self.args, self.kwargs)
+
+class ResolverIterator(list):
+    def __init__(self, resolver):
+        self.resolver = resolver
+        self.__in_iteration = False
+
+    def __iter__(self):
+        return self
+
+    def next(self, nop=False):
+        if nop:
+            self._candidate = ResolverCandidate(*self.resolver.next())
+        else:
+            if self.__in_iteration:
+                self._candidate = ResolverCandidate(*self.resolver.next())
+            elif not hasattr(self, '_candidate'):
+                self._candidate = ResolverCandidate(*self.resolver.next())
+                self.__in_iteration = True
+            else:
+                self.__in_iteration = True
+        return self._candidate
+
+    def __get_candidate(self):
+        if not hasattr(self, '_candidate'):
+            self.next()
+        return self._candidate
+
+    candidate = property(__get_candidate)
+
+class ResolverCandidates(object):
+    def __init__(self, resolver, list):
+        self.iterator = ResolverIterator(resolver)
+        self.list = list
+
+    def __getitem__(self, index):
+        return self.iterator.candidate[index]
+
+    def __iter__(self):
+        return self
+
+    def next(self):
+        if not self.list:
+            for item in self.iterator.candidate:
+                return item
+        else:
+            return self.iterator.next()
+
+    def __nonzero__(self):
+        try:
+            self.iterator.next(nop=True)
+        except Resolver404:
+            return False
+        return True
+
 class Resolver404(Http404):
     pass
 
@@ -112,7 +179,7 @@ class RegexURLPattern(object):
             return
         self._callback_str = prefix + '.' + self._callback_str
 
-    def resolve(self, path):
+    def resolve(self, path, list=False):
         match = self.regex.search(path)
         if match:
             # If there are any named groups, use those as kwargs, ignoring
@@ -126,7 +193,13 @@ class RegexURLPattern(object):
             # In both cases, pass any extra_kwargs as **kwargs.
             kwargs.update(self.default_args)
 
-            return self.callback, args, kwargs
+            if list:
+                return [ [ self.callback, args, kwargs ] ]
+            else:
+                return self.callback, args, kwargs
+
+        if list:
+            return []
 
     def _get_callback(self):
         if self._callback is not None:
@@ -212,14 +285,17 @@ class RegexURLResolver(object):
         return self._app_dict
     app_dict = property(_get_app_dict)
 
-    def resolve(self, path):
+    def resolve(self, path, list=False):
+        return ResolverCandidates(self._bare_resolve(path), list=list)
+
+    def _bare_resolve(self, path):
         tried = []
         match = self.regex.search(path)
         if match:
             new_path = path[match.end():]
             for pattern in self.url_patterns:
                 try:
-                    sub_match = pattern.resolve(new_path)
+                    sub_matches = pattern.resolve(new_path, list=True)
                 except Resolver404, e:
                     sub_tried = e.args[0].get('tried')
                     if sub_tried is not None:
@@ -227,12 +303,13 @@ class RegexURLResolver(object):
                     else:
                         tried.append(pattern.regex.pattern)
                 else:
-                    if sub_match:
-                        sub_match_dict = dict([(smart_str(k), v) for k, v in match.groupdict().items()])
-                        sub_match_dict.update(self.default_kwargs)
-                        for k, v in sub_match[2].iteritems():
-                            sub_match_dict[smart_str(k)] = v
-                        return sub_match[0], sub_match[1], sub_match_dict
+                    if sub_matches:
+                        for sub_match in sub_matches:
+                            sub_match_dict = dict([(smart_str(k), v) for k, v in match.groupdict().items()])
+                            sub_match_dict.update(self.default_kwargs)
+                            for k, v in sub_match[2].iteritems():
+                                sub_match_dict[smart_str(k)] = v
+                            yield sub_match[0], sub_match[1], sub_match_dict, self.app_name, self.namespace
                     tried.append(pattern.regex.pattern)
             raise Resolver404({'tried': tried, 'path': new_path})
         raise Resolver404({'path' : path})
@@ -301,10 +378,10 @@ class RegexURLResolver(object):
         raise NoReverseMatch("Reverse for '%s' with arguments '%s' and keyword "
                 "arguments '%s' not found." % (lookup_view_s, args, kwargs))
 
-def resolve(path, urlconf=None):
+def resolve(path, urlconf=None, list=False):
     if urlconf is None:
         urlconf = get_urlconf()
-    return get_resolver(urlconf).resolve(path)
+    return get_resolver(urlconf).resolve(path, list=list)
 
 def reverse(viewname, urlconf=None, args=None, kwargs=None, prefix=None, current_app=None):
     if urlconf is None:
