@@ -50,13 +50,16 @@ class ResolverCandidate(object):
     def __repr__(self):
         return '(%s, %s, %s)' % (self.func, self.args, self.kwargs)
 
-class ResolverIterator(object):
+class ResolverCandidates(object):
     def __init__(self, resolver):
         self.resolver = resolver
         self.__in_iteration = False
 
     def __iter__(self):
         return self
+
+    def __repr__(self):
+        return self.candidate.__repr__()
 
     def next(self, peek=False):
         # If this is the first time accessing our iterator, or we have
@@ -78,30 +81,9 @@ class ResolverIterator(object):
         return self.next(peek=True)
     candidate = property(__get_candidate)
 
-class ResolverCandidates(object):
-    def __init__(self, resolver, backtracking=False):
-        self.iterator = ResolverIterator(resolver)
-        self.backtracking = backtracking
-
-    def __getitem__(self, index):
-        return self.iterator.candidate[index]
-
-    def __iter__(self):
-        return self
-
-    def __repr__(self):
-        return self.iterator.candidate.__repr__()
-
-    def next(self):
-        if self.backtracking:
-            return self.iterator.next()
-        else:
-            for item in self.iterator.candidate:
-                return item
-
     def __nonzero__(self):
         try:
-            self.iterator.next(peek=True)
+            self.next(peek=True)
         except Resolver404:
             return False
         return True
@@ -182,7 +164,7 @@ class RegexURLPattern(object):
             return
         self._callback_str = prefix + '.' + self._callback_str
 
-    def resolve(self, path, backtracking=False):
+    def resolve(self, path):
         match = self.regex.search(path)
         if match:
             # If there are any named groups, use those as kwargs, ignoring
@@ -196,13 +178,7 @@ class RegexURLPattern(object):
             # In both cases, pass any extra_kwargs as **kwargs.
             kwargs.update(self.default_args)
 
-            if backtracking:
-                return [ [ self.callback, args, kwargs ] ]
-            else:
-                return self.callback, args, kwargs
-
-        if backtracking:
-            return []
+            return ResolverCandidate(self.callback, args, kwargs)
 
     def _get_callback(self):
         if self._callback is not None:
@@ -288,17 +264,23 @@ class RegexURLResolver(object):
         return self._app_dict
     app_dict = property(_get_app_dict)
 
-    def resolve(self, path, backtracking=False):
-        return ResolverCandidates(self._backtracking_resolve(path), backtracking=backtracking)
+    def resolve(self, path):
+        return self.backtracking_resolve(path).next()
 
-    def _backtracking_resolve(self, path):
+    def backtracking_resolve(self, path):
+        return ResolverCandidates(self.__backtracking_resolve(path))
+
+    def __backtracking_resolve(self, path):
         tried = []
         match = self.regex.search(path)
         if match:
             new_path = path[match.end():]
             for pattern in self.url_patterns:
                 try:
-                    sub_matches = pattern.resolve(new_path, backtracking=True)
+                    if isinstance(pattern, RegexURLResolver):
+                        sub_matches = pattern.backtracking_resolve(new_path)
+                    else:
+                        sub_matches = pattern.resolve(new_path)
                 except Resolver404, e:
                     sub_tried = e.args[0].get('tried')
                     if sub_tried is not None:
@@ -307,12 +289,15 @@ class RegexURLResolver(object):
                         tried.append(pattern.regex.pattern)
                 else:
                     if sub_matches:
+                        if isinstance(sub_matches, ResolverCandidate):
+                            sub_matches = [ sub_matches ]
+
                         for sub_match in sub_matches:
                             sub_match_dict = dict([(smart_str(k), v) for k, v in match.groupdict().items()])
                             sub_match_dict.update(self.default_kwargs)
-                            for k, v in sub_match[2].iteritems():
+                            for k, v in sub_match.kwargs.iteritems():
                                 sub_match_dict[smart_str(k)] = v
-                            yield sub_match[0], sub_match[1], sub_match_dict, self.app_name, self.namespace
+                            yield ResolverCandidate(sub_match.func, sub_match.args, sub_match_dict, self.app_name, self.namespace)
                     tried.append(pattern.regex.pattern)
             raise Resolver404({'tried': tried, 'path': new_path})
         raise Resolver404({'path' : path})
@@ -381,10 +366,15 @@ class RegexURLResolver(object):
         raise NoReverseMatch("Reverse for '%s' with arguments '%s' and keyword "
                 "arguments '%s' not found." % (lookup_view_s, args, kwargs))
 
-def resolve(path, urlconf=None, backtracking=False):
+def resolve(path, urlconf=None):
     if urlconf is None:
         urlconf = get_urlconf()
-    return get_resolver(urlconf).resolve(path, backtracking=backtracking)
+    return get_resolver(urlconf).resolve(path)
+
+def backtracking_resolve(path, urlconf=None):
+    if urlconf is None:
+        urlconf = get_urlconf()
+    return get_resolver(urlconf).backtracking_resolve(path)
 
 def reverse(viewname, urlconf=None, args=None, kwargs=None, prefix=None, current_app=None):
     if urlconf is None:

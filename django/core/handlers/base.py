@@ -87,7 +87,7 @@ class BaseHandler(object):
                     urlresolvers.set_urlconf(urlconf)
                     resolver = urlresolvers.RegexURLResolver(r'^/', urlconf)
 
-                for candidate in resolver.resolve(request.path_info, backtracking=True):
+                for candidate in resolver.backtracking_resolve(request.path_info):
                     callback, callback_args, callback_kwargs = candidate.func, candidate.args, candidate.kwargs
 
                     # Apply view middleware
