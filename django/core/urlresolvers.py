@@ -48,7 +48,7 @@ class ResolverCandidate(object):
         return (self.func, self.args, self.kwargs)[index]
 
     def __repr__(self):
-        return '%s - %s - %s' % (self.func, self.args, self.kwargs)
+        return '(%s, %s, %s)' % (self.func, self.args, self.kwargs)
 
 class ResolverIterator(object):
     def __init__(self, resolver):
@@ -88,6 +88,9 @@ class ResolverCandidates(object):
 
     def __iter__(self):
         return self
+
+    def __repr__(self):
+        return self.iterator.candidate.__repr__()
 
     def next(self):
         if self.backtracking:
