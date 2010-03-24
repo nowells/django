@@ -98,6 +98,7 @@ class BaseHandler(object):
 
                     try:
                         response = callback(request, *callback_args, **callback_kwargs)
+                        break
                     except urlresolvers.Resolver404:
                         pass
                     except Exception, e:

@@ -90,11 +90,11 @@ class ResolverCandidates(object):
         return self
 
     def next(self):
-        if not self.backtracking:
+        if self.backtracking:
+            return self.iterator.next()
+        else:
             for item in self.iterator.candidate:
                 return item
-        else:
-            return self.iterator.next()
 
     def __nonzero__(self):
         try:
@@ -286,9 +286,9 @@ class RegexURLResolver(object):
     app_dict = property(_get_app_dict)
 
     def resolve(self, path, backtracking=False):
-        return ResolverCandidates(self._bare_resolve(path), backtracking=backtracking)
+        return ResolverCandidates(self._backtracking_resolve(path), backtracking=backtracking)
 
-    def _bare_resolve(self, path):
+    def _backtracking_resolve(self, path):
         tried = []
         match = self.regex.search(path)
         if match:
