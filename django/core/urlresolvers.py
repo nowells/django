@@ -66,7 +66,7 @@ class ResolverCandidate(object):
         return '(%s, %s, %s)' % (self.func, self.args, self.kwargs)
 
     def reverse(self):
-        return reverse(self.view_name, args=self.args, kwargs=self.kwargs)
+        return reverse(self.view_name, args=self.args, kwargs=self.kwargs, current_app=self.app_name)
 
 class ResolverCandidates(object):
     def __init__(self, resolver):
