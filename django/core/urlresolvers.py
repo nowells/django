@@ -42,21 +42,17 @@ class ResolverCandidate(object):
         self.args = args
         self.kwargs = kwargs
         self.app_name = app_name
-        self.url_name = url_name
         self.namespaces = [ x for x in namespaces if x ]
+        if not url_name:
+            url_name = '.'.join([ func.__module__, func.__name__ ])
+        self.url_name = url_name
 
     def namespace(self):
         return ':'.join(self.namespaces)
     namespace = property(namespace)
 
-    def func_name(self):
-        if callable(self.func):
-            return self.func.__name__
-        return self.func
-    func_name = property(func_name)
-
     def view_name(self):
-        return ':'.join([ x for x in [ self.namespace, self.func_name ]  if x ])
+        return ':'.join([ x for x in [ self.namespace, self.url_name ]  if x ])
     view_name = property(view_name)
 
     def __getitem__(self, index):
