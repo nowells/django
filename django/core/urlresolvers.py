@@ -37,18 +37,36 @@ _prefixes = {}
 _urlconfs = {}
 
 class ResolverCandidate(object):
-    def __init__(self, func, args, kwargs, app_name=None, namespace=None):
+    def __init__(self, func, args, kwargs, url_name=None, app_name=None, namespaces=[]):
         self.func = func
         self.args = args
         self.kwargs = kwargs
         self.app_name = app_name
-        self.namespace = namespace
+        self.url_name = url_name
+        self.namespaces = [ x for x in namespaces if x ]
+
+    def namespace(self):
+        return ':'.join(self.namespaces)
+    namespace = property(namespace)
+
+    def func_name(self):
+        if callable(self.func):
+            return self.func.__name__
+        return self.func
+    func_name = property(func_name)
+
+    def view_name(self):
+        return ':'.join([ x for x in [ self.namespace, self.func_name ]  if x ])
+    view_name = property(view_name)
 
     def __getitem__(self, index):
         return (self.func, self.args, self.kwargs)[index]
 
     def __repr__(self):
         return '(%s, %s, %s)' % (self.func, self.args, self.kwargs)
+
+    def reverse(self):
+        return reverse(self.view_name, args=self.args, kwargs=self.kwargs)
 
 class ResolverCandidates(object):
     def __init__(self, resolver):
@@ -66,7 +84,7 @@ class ResolverCandidates(object):
         # already started iteration, fetch and store the next candidate,
         # or we want to keep in on the current candidate
         if not hasattr(self, '_candidate') or (self.__in_iteration and not peek):
-            self._candidate = ResolverCandidate(*self.resolver.next())
+            self._candidate = self.resolver.next()
 
         # Functions like __nonzero__ should not trigger the start of
         # iteration over the resolver generator. They need to know
@@ -77,9 +95,9 @@ class ResolverCandidates(object):
             self.__in_iteration = True
         return self._candidate
 
-    def __get_candidate(self):
+    def candidate(self):
         return self.next(peek=True)
-    candidate = property(__get_candidate)
+    candidate = property(candidate)
 
     def __nonzero__(self):
         try:
@@ -178,7 +196,7 @@ class RegexURLPattern(object):
             # In both cases, pass any extra_kwargs as **kwargs.
             kwargs.update(self.default_args)
 
-            return ResolverCandidate(self.callback, args, kwargs)
+            return ResolverCandidate(self.callback, args, kwargs, self.name)
 
     def _get_callback(self):
         if self._callback is not None:
@@ -297,7 +315,7 @@ class RegexURLResolver(object):
                             sub_match_dict.update(self.default_kwargs)
                             for k, v in sub_match.kwargs.iteritems():
                                 sub_match_dict[smart_str(k)] = v
-                            yield ResolverCandidate(sub_match.func, sub_match.args, sub_match_dict, self.app_name, self.namespace)
+                            yield ResolverCandidate(sub_match.func, sub_match.args, sub_match_dict, sub_match.url_name, self.app_name or sub_match.app_name, [ self.namespace ] + sub_match.namespaces)
                     tried.append(pattern.regex.pattern)
             raise Resolver404({'tried': tried, 'path': new_path})
         raise Resolver404({'path' : path})
