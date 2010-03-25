@@ -11,3 +11,6 @@ def absolute_kwargs_view(request, arg1=1, arg2=2):
 
 def resolver_404_view(request, *args, **kwargs):
     raise Resolver404
+
+def backtracking_view(request, *args, **kwargs):
+    pass

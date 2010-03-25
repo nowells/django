@@ -1,12 +1,11 @@
 from django.conf.urls.defaults import *
-from views import empty_view, absolute_kwargs_view, resolver_404_view
+from views import empty_view, absolute_kwargs_view
 
 other_patterns = patterns('',
     url(r'non_path_include/$', empty_view, name='non_path_include'),
 )
 
 urlpatterns = patterns('',
-    url(r'', resolver_404_view, name='resolver_404_view'),
     url(r'^places/(\d+)/$', empty_view, name='places'),
     url(r'^places?/$', empty_view, name="places?"),
     url(r'^places+/$', empty_view, name="places+"),

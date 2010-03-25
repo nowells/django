@@ -17,7 +17,7 @@ ImproperlyConfigured: The included urlconf regressiontests.urlpatterns_reverse.n
 import unittest
 
 from django.conf import settings
-from django.core.urlresolvers import reverse, resolve, NoReverseMatch, Resolver404
+from django.core.urlresolvers import backtracking_resolve, reverse, resolve, NoReverseMatch, Resolver404
 from django.http import HttpResponseRedirect, HttpResponsePermanentRedirect
 from django.shortcuts import redirect
 from django.test import TestCase
@@ -118,9 +118,20 @@ class URLPatternReverse(TestCase):
             else:
                 self.assertEquals(got, expected)
 
-class ResolverTests(TestCase):
-    urls = 'regressiontests.urlpatterns_reverse.urls'
+class BacktrackingUrlTests(TestCase):
+    urls = 'regressiontests.urlpatterns_reverse.backtracking_urls'
     
+    def test_backtracking_normal_reverse(self):
+        self.assertEqual(reverse('backtracking_view'), '/backtrack/')
+    
+    def test_backtracking_normal_resolve(self):
+        r = backtracking_resolve('/backtrack/')
+        first = r.next()
+        self.assertEqual(first.func.__name__, 'resolver_404_view')
+        second = r.next()
+        self.assertEqual(second.func.__name__, 'backtracking_view')
+
+class ResolverTests(unittest.TestCase):
     def test_non_regex(self):
         """
         Verifies that we raise a Resolver404 if what we are resolving doesn't
@@ -134,9 +145,6 @@ class ResolverTests(TestCase):
         self.assertRaises(Resolver404, resolve, 'a')
         self.assertRaises(Resolver404, resolve, '\\')
         self.assertRaises(Resolver404, resolve, '.')
-        
-    def test_successful_resolve(self):
-        self.assertEqual(resolve('/places/3/')[0].__name__, 'empty_view')
 
 class ReverseShortcutTests(TestCase):
     urls = 'regressiontests.urlpatterns_reverse.urls'
