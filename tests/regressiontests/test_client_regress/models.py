@@ -821,3 +821,19 @@ class UnicodePayloadTests(TestCase):
         response = self.client.post("/test_client_regress/parse_unicode_json/", json,
                                     content_type="application/json; charset=koi8-r")
         self.assertEqual(response.content, json.encode('koi8-r'))
+
+class BacktrackingResolveTests(TestCase):
+    def test_capture(self):
+        response = self.client.get("/test_client_regress/capture-foo")
+        self.assertEqual(response.content, "Success for backtracking_resolve_dynamic_capture: capture-foo")
+
+        response = self.client.get("/test_client_regress/bar-capture")
+        self.assertEqual(response.content, "Success for backtracking_resolve_dynamic_capture: bar-capture")
+
+    def test_redirect(self):
+        response = self.client.get("/test_client_regress/redirect-bar")
+        self.assertRedirects(response, "/test_client_regress/arg_view/test/", status_code=302, target_status_code=200)
+
+    def test_failed_capture(self):
+        response = self.client.get("/test_client_regress/redirect-foo")
+        self.assertEqual(response.status_code, 404)

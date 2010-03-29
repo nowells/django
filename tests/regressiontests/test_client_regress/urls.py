@@ -3,6 +3,7 @@ from django.views.generic.simple import redirect_to
 import views
 
 urlpatterns = patterns('',
+    (r'^(?P<data>.*)$', views.backtracking_resolve_dynamic_capture),
     (r'^no_template_view/$', views.no_template_view),
     (r'^staff_only/$', views.staff_only_view),
     (r'^get_view/$', views.get_view),
@@ -16,6 +17,7 @@ urlpatterns = patterns('',
     (r'^redirect_to_non_existent_view/$', redirect_to, {'url': '/test_client_regress/non_existent_view/'}),
     (r'^redirect_to_non_existent_view2/$', redirect_to, {'url': '/test_client_regress/redirect_to_non_existent_view/'}),
     (r'^redirect_to_self/$', redirect_to, {'url': '/test_client_regress/redirect_to_self/'}),
+    (r'^(?P<data>.*)$', views.backtracking_resolve_dynamic_redirect),
     (r'^circular_redirect_1/$', redirect_to, {'url': '/test_client_regress/circular_redirect_2/'}),
     (r'^circular_redirect_2/$', redirect_to, {'url': '/test_client_regress/circular_redirect_3/'}),
     (r'^circular_redirect_3/$', redirect_to, {'url': '/test_client_regress/circular_redirect_1/'}),
