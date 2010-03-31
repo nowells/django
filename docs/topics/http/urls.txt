@@ -48,13 +48,16 @@ algorithm the system follows to determine which Python code to execute:
        ``urlpatterns``. This should be a Python list, in the format returned by
        the function ``django.conf.urls.defaults.patterns()``.
 
-    3. Django runs through each URL pattern, in order, and stops at the first
-       one that matches the requested URL.
-
-    4. Once one of the regexes matches, Django imports and calls the given
-       view, which is a simple Python function. The view gets passed an
-       :class:`~django.http.HttpRequest` as its first argument and any values
-       captured in the regex as remaining arguments.
+    3. Django runs through each URL pattern, in order, and constructus
+       a list of all the possible matches.
+    
+    4. It then calls the view corresponding to the first match. The view is
+       a simple Python function that gets passed an 
+       :class:`~django.http.HttpRequest` as its first argument and
+       any values captured in the regex as remaining arguments. If the view
+       raises a Resolver404 error, Django will try the next candidate on
+       down the list. If not, it will return the response provided by the
+       view.
 
 Example
 =======
