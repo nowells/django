@@ -51,6 +51,9 @@ class Manager(object):
         super(Manager, self).__init__()
         self._set_creation_counter()
         self.model = None
+        self.model_field_name = None
+        self.related_model_instance = None
+        self.related_model_field_name = None
         self._inherited = False
         self._db = None
 

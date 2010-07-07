@@ -295,6 +295,10 @@ class ReverseSingleRelatedObjectDescriptor(object):
             # If the related manager indicates that it should be used for
             # related fields, respect that.
             rel_mgr = self.field.rel.to._default_manager
+            rel_mgr.model_field_name = self.field.name
+            rel_mgr.related_model_instance = instance
+            rel_mgr.related_model_field_name = self.field.rel.related_name
+
             db = router.db_for_read(self.field.rel.to, instance=instance)
             if getattr(rel_mgr, 'use_for_related_fields', False):
                 rel_obj = rel_mgr.using(db).get(**params)
@@ -455,6 +459,9 @@ class ForeignRelatedObjectsDescriptor(object):
         manager.core_filters = {'%s__%s' % (rel_field.name, attname):
                 getattr(instance, attname)}
         manager.model = self.related.model
+        manager.model_field_name = rel_field.name
+        manager.related_model_instance = instance
+        manager.related_model_field_name = rel_field.rel.related_name
 
         return manager
 
@@ -663,6 +670,9 @@ class ManyRelatedObjectsDescriptor(object):
             target_field_name=self.related.field.m2m_field_name(),
             reverse=True
         )
+        manager.model_field_name = self.related.field.name
+        manager.related_model_instance = instance
+        manager.related_model_field_name = self.related.field.m2m_reverse_name()
 
         return manager
 
@@ -715,6 +725,9 @@ class ReverseManyRelatedObjectsDescriptor(object):
             target_field_name=self.field.m2m_reverse_field_name(),
             reverse=False
         )
+        manager.model_field_name = self.field.related_query_name()
+        manager.related_model_instance = instance
+        manager.related_model_field_name = self.field.attname
 
         return manager
 
