@@ -48,6 +48,7 @@ u'<html><h1>Hello</h1></html>'
 >>> t.render(c)
 u'<html></html>'
 """
+import imp
 import re
 from inspect import getargspec
 
@@ -62,6 +63,7 @@ from django.utils.translation import ugettext as _
 from django.utils.safestring import SafeData, EscapeData, mark_safe, mark_for_escaping
 from django.utils.formats import localize
 from django.utils.html import escape
+from django.utils.module_loading import module_has_submodule
 
 __all__ = ('Template', 'Context', 'RequestContext', 'compile_string')
 
@@ -979,10 +981,18 @@ def import_library(taglib_module):
     Verifies that the library contains a 'register' attribute, and
     returns that attribute as the representation of the library
     """
+    app_path, taglib = taglib_module.rsplit('.',1)
+    app_module = import_module(app_path)
     try:
         mod = import_module(taglib_module)
-    except ImportError:
-        return None
+    except ImportError, e:
+        # If the ImportError is because the taglib submodule does not exist, that's not
+        # an error that should be raised. If the submodule exists and raised an ImportError
+        # on the attempt to load it, that we want to raise.
+        if not module_has_submodule(app_module, taglib):
+            return None
+        else:
+            raise InvalidTemplateLibrary("ImportError raised loading %s: %s" % (taglib_module, e))
     try:
         return mod.register
     except AttributeError:

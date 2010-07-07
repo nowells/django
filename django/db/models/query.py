@@ -3,6 +3,7 @@ The main QuerySet implementation. This provides the public API for the ORM.
 """
 
 from copy import deepcopy
+from itertools import izip
 
 from django.db import connections, router, transaction, IntegrityError
 from django.db.models.aggregates import Aggregate
@@ -44,11 +45,12 @@ class QuerySet(object):
         """
         Deep copy of a QuerySet doesn't populate the cache
         """
-        obj_dict = deepcopy(self.__dict__, memo)
-        obj_dict['_iter'] = None
-
         obj = self.__class__()
-        obj.__dict__.update(obj_dict)
+        for k,v in self.__dict__.items():
+            if k in ('_iter','_result_cache'):
+                obj.__dict__[k] = None
+            else:
+                obj.__dict__[k] = deepcopy(v, memo)
         return obj
 
     def __getstate__(self):
@@ -428,12 +430,15 @@ class QuerySet(object):
         # Delete objects in chunks to prevent the list of related objects from
         # becoming too long.
         seen_objs = None
+        del_itr = iter(del_query)
         while 1:
-            # Collect all the objects to be deleted in this chunk, and all the
+            # Collect a chunk of objects to be deleted, and then all the
             # objects that are related to the objects that are to be deleted.
+            # The chunking *isn't* done by slicing the del_query because we
+            # need to maintain the query cache on del_query (see #12328)
             seen_objs = CollectedObjects(seen_objs)
-            for object in del_query[:CHUNK_SIZE]:
-                object._collect_sub_objects(seen_objs)
+            for i, obj in izip(xrange(CHUNK_SIZE), del_itr):
+                obj._collect_sub_objects(seen_objs)
 
             if not seen_objs:
                 break
@@ -1149,7 +1154,17 @@ def get_cached_row(klass, row, index_start, using, max_depth=0, cur_depth=0,
         return None
 
     restricted = requested is not None
-    load_fields = only_load and only_load.get(klass) or None
+    if only_load:
+        load_fields = only_load.get(klass)
+        # When we create the object, we will also be creating populating
+        # all the parent classes, so traverse the parent classes looking
+        # for fields that must be included on load.
+        for parent in klass._meta.get_parent_list():
+            fields = only_load.get(parent)
+            if fields:
+                load_fields.update(fields)
+    else:
+        load_fields = None
     if load_fields:
         # Handle deferred fields.
         skip = set()
@@ -1407,12 +1422,19 @@ class RawQuerySet(object):
             self._model_fields = {}
             for field in self.model._meta.fields:
                 name, column = field.get_attname_column()
-                self._model_fields[converter(column)] = name
+                self._model_fields[converter(column)] = field
         return self._model_fields
 
     def transform_results(self, values):
         model_init_kwargs = {}
         annotations = ()
+
+        # Perform database backend type resolution
+        connection = connections[self.db]
+        compiler = connection.ops.compiler('SQLCompiler')(self.query, connection, self.db)
+        if hasattr(compiler, 'resolve_columns'):
+            fields = [self.model_fields.get(c,None) for c in self.columns]
+            values = compiler.resolve_columns(values, fields)
 
         # Associate fields to values
         for pos, value in enumerate(values):
@@ -1420,7 +1442,7 @@ class RawQuerySet(object):
 
             # Separate properties from annotations
             if column in self.model_fields.keys():
-                model_init_kwargs[self.model_fields[column]] = value
+                model_init_kwargs[self.model_fields[column].attname] = value
             else:
                 annotations += (column, value),
 

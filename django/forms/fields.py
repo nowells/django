@@ -71,7 +71,7 @@ class Field(object):
 
     def __init__(self, required=True, widget=None, label=None, initial=None,
                  help_text=None, error_messages=None, show_hidden_initial=False,
-                 validators=[]):
+                 validators=[], localize=False):
         # required -- Boolean that specifies whether the field is required.
         #             True by default.
         # widget -- A Widget class, or instance of a Widget class, that should
@@ -85,9 +85,12 @@ class Field(object):
         # initial -- A value to use in this Field's initial display. This value
         #            is *not* used as a fallback if data isn't given.
         # help_text -- An optional string to use as "help text" for this Field.
+        # error_messages -- An optional dictionary to override the default
+        #                   messages that the field will raise.
         # show_hidden_initial -- Boolean that specifies if it is needed to render a
         #                        hidden widget with initial value after widget.
         # validators -- List of addtional validators to use
+        # localize -- Boolean that specifies if the field should be localized.
         if label is not None:
             label = smart_unicode(label)
         self.required, self.label, self.initial = required, label, initial
@@ -99,6 +102,11 @@ class Field(object):
         widget = widget or self.widget
         if isinstance(widget, type):
             widget = widget()
+
+        # Trigger the localization machinery if needed.
+        self.localize = localize
+        if self.localize:
+            widget.is_localized = True
 
         # Hook into self.widget_attrs() for any Field-specific HTML attributes.
         extra_attrs = self.widget_attrs(widget)
@@ -213,7 +221,8 @@ class IntegerField(Field):
         value = super(IntegerField, self).to_python(value)
         if value in validators.EMPTY_VALUES:
             return None
-        value = formats.sanitize_separators(value)
+        if self.localize:
+            value = formats.sanitize_separators(value)
         try:
             value = int(str(value))
         except (ValueError, TypeError):
@@ -233,7 +242,8 @@ class FloatField(IntegerField):
         value = super(IntegerField, self).to_python(value)
         if value in validators.EMPTY_VALUES:
             return None
-        value = formats.sanitize_separators(value)
+        if self.localize:
+            value = formats.sanitize_separators(value)
         try:
             value = float(value)
         except (ValueError, TypeError):
@@ -268,7 +278,8 @@ class DecimalField(Field):
         """
         if value in validators.EMPTY_VALUES:
             return None
-        value = formats.sanitize_separators(value)
+        if self.localize:
+            value = formats.sanitize_separators(value)
         value = smart_str(value).strip()
         try:
             value = Decimal(value)
@@ -831,9 +842,14 @@ class SplitDateTimeField(MultiValueField):
         errors = self.default_error_messages.copy()
         if 'error_messages' in kwargs:
             errors.update(kwargs['error_messages'])
+        localize = kwargs.get('localize', False)
         fields = (
-            DateField(input_formats=input_date_formats, error_messages={'invalid': errors['invalid_date']}),
-            TimeField(input_formats=input_time_formats, error_messages={'invalid': errors['invalid_time']}),
+            DateField(input_formats=input_date_formats,
+                      error_messages={'invalid': errors['invalid_date']},
+                      localize=localize),
+            TimeField(input_formats=input_time_formats,
+                      error_messages={'invalid': errors['invalid_time']},
+                      localize=localize),
         )
         super(SplitDateTimeField, self).__init__(fields, *args, **kwargs)
 

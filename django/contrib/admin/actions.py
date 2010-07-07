@@ -12,10 +12,6 @@ from django.utils.html import escape
 from django.utils.safestring import mark_safe
 from django.utils.text import capfirst
 from django.utils.translation import ugettext_lazy, ugettext as _
-try:
-    set
-except NameError:
-    from sets import Set as set     # Python 2.3 fallback
 
 def delete_selected(modeladmin, request, queryset):
     """
@@ -68,7 +64,7 @@ def delete_selected(modeladmin, request, queryset):
     }
 
     # Display the confirmation page
-    return render_to_response(modeladmin.delete_confirmation_template or [
+    return render_to_response(modeladmin.delete_selected_confirmation_template or [
         "admin/%s/%s/delete_selected_confirmation.html" % (app_label, opts.object_name.lower()),
         "admin/%s/delete_selected_confirmation.html" % app_label,
         "admin/delete_selected_confirmation.html"

@@ -137,9 +137,8 @@ class BaseHandler(object):
                 raise
             except: # Handle everything else, including SuspiciousOperation, etc.
                 # Get the exception info now, in case another exception is thrown later.
-                exc_info = sys.exc_info()
                 receivers = signals.got_request_exception.send(sender=self.__class__, request=request)
-                return self.handle_uncaught_exception(request, resolver, exc_info)
+                return self.handle_uncaught_exception(request, resolver, sys.exc_info())
         finally:
             # Reset URLconf for this thread on the way out for complete
             # isolation of request.urlconf
@@ -173,6 +172,9 @@ class BaseHandler(object):
             request_repr = "Request repr() unavailable"
         message = "%s\n\n%s" % (self._get_traceback(exc_info), request_repr)
         mail_admins(subject, message, fail_silently=True)
+        # If Http500 handler is not installed, re-raise last exception
+        if resolver.urlconf_module is None:
+            raise exc_info[1], None, exc_info[2]
         # Return an HttpResponse that displays a friendly error message.
         callback, param_dict = resolver.resolve500()
         return callback(request, **param_dict)

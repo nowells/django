@@ -12,9 +12,9 @@ import sys
 from django.conf import settings, Settings
 from django.core.management import call_command
 from django.db.models.loading import load_app
-from django.test import TestCase
+from django.test import TransactionTestCase
 
-class ProxyModelInheritanceTests(TestCase):
+class ProxyModelInheritanceTests(TransactionTestCase):
 
     def setUp(self):
         self.old_sys_path = sys.path
@@ -23,9 +23,9 @@ class ProxyModelInheritanceTests(TestCase):
         settings.INSTALLED_APPS = ('app1', 'app2')
         map(load_app, settings.INSTALLED_APPS)
         call_command('syncdb', verbosity=0)
+        global ProxyModel, NiceModel
         from app1.models import ProxyModel
         from app2.models import NiceModel
-        global ProxyModel, NiceModel
 
     def tearDown(self):
         settings.INSTALLED_APPS = self.old_installed_apps

@@ -95,6 +95,7 @@ class BaseDatabaseFeatures(object):
     # If True, don't use integer foreign keys referring to, e.g., positive
     # integer primary keys.
     related_fields_match_type = False
+    allow_sliced_subqueries = True
 
 class BaseDatabaseOperations(object):
     """
@@ -351,6 +352,11 @@ class BaseDatabaseOperations(object):
         Returns the SQL statement required to start a transaction.
         """
         return "BEGIN;"
+
+    def end_transaction_sql(self, success=True):
+        if not success:
+            return "ROLLBACK;"
+        return "COMMIT;"
 
     def tablespace_sql(self, tablespace, inline=False):
         """

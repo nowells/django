@@ -1,8 +1,9 @@
 # -*- encoding: utf-8 -*-
+import datetime
+import decimal
 import os
 import sys
-import decimal
-import datetime
+import pickle
 
 from django.template import Template, Context
 from django.conf import settings
@@ -41,12 +42,17 @@ class TranslationTests(TestCase):
         s4 = ugettext_lazy('Some other string')
         self.assertEqual(False, s == s4)
 
+    def test_lazy_pickle(self):
+        s1 = ugettext_lazy("test")
+        self.assertEqual(unicode(s1), "test")
+        s2 = pickle.loads(pickle.dumps(s1))
+        self.assertEqual(unicode(s2), "test")
+
     def test_string_concat(self):
         """
         unicode(string_concat(...)) should not raise a TypeError - #4796
         """
         import django.utils.translation
-        self.assertEqual(django.utils.translation, reload(django.utils.translation))
         self.assertEqual(u'django', unicode(django.utils.translation.string_concat("dja", "ngo")))
 
     def test_safe_status(self):
@@ -410,7 +416,8 @@ class FormattingTests(TestCase):
             self.assertEqual(localize_input(datetime.datetime(2009, 12, 31, 6, 0, 0)), '31.12.2009 06:00:00')
             self.assertEqual(datetime.datetime(2009, 12, 31, 6, 0, 0), form6.cleaned_data['date_added'])
             settings.USE_THOUSAND_SEPARATOR = True
-            self.assert_(u'12.000' in form6.as_ul())
+            # Checking for the localized "products_delivered" field
+            self.assert_(u'<input type="text" name="products_delivered" value="12.000" id="id_products_delivered" />' in form6.as_ul())
         finally:
             deactivate()
 

@@ -5,17 +5,12 @@ Various complex queries that have been problematic in the past.
 import datetime
 import pickle
 import sys
+import threading
 
 from django.conf import settings
 from django.db import models, DEFAULT_DB_ALIAS
 from django.db.models import Count
 from django.db.models.query import Q, ITER_CHUNK_SIZE, EmptyQuerySet
-
-# Python 2.3 doesn't have sorted()
-try:
-    sorted
-except NameError:
-    from django.utils.itercompat import sorted
 
 class DumbCategory(models.Model):
     pass
@@ -44,6 +39,13 @@ class Note(models.Model):
 
     def __unicode__(self):
         return self.note
+
+    def __init__(self, *args, **kwargs):
+        super(Note, self).__init__(*args, **kwargs)
+        # Regression for #13227 -- having an attribute that
+        # is unpickleable doesn't stop you from cloning queries
+        # that use objects of that type as an argument.
+        self.lock = threading.Lock()
 
 class Annotation(models.Model):
     name = models.CharField(max_length=10)
@@ -294,9 +296,9 @@ True
 >>> t4 = Tag.objects.create(name='t4', parent=t3)
 >>> t5 = Tag.objects.create(name='t5', parent=t3)
 
->>> n1 = Note.objects.create(note='n1', misc='foo')
->>> n2 = Note.objects.create(note='n2', misc='bar')
->>> n3 = Note.objects.create(note='n3', misc='foo')
+>>> n1 = Note.objects.create(note='n1', misc='foo', id=1)
+>>> n2 = Note.objects.create(note='n2', misc='bar', id=2)
+>>> n3 = Note.objects.create(note='n3', misc='foo', id=3)
 
 >>> ann1 = Annotation.objects.create(name='a1', tag=t1)
 >>> ann1.notes.add(n1)
@@ -1271,12 +1273,12 @@ True
 
 """}
 
-# In Python 2.3 and the Python 2.6 beta releases, exceptions raised in __len__
+# In Python 2.6 beta releases, exceptions raised in __len__
 # are swallowed (Python issue 1242657), so these cases return an empty list,
 # rather than raising an exception. Not a lot we can do about that,
 # unfortunately, due to the way Python handles list() calls internally. Thus,
-# we skip the tests for Python 2.3 and 2.6.
-if (2, 4) <= sys.version_info < (2, 6):
+# we skip the tests for Python 2.6.
+if sys.version_info < (2, 6):
     __test__["API_TESTS"] += """
 # If you're not careful, it's possible to introduce infinite loops via default
 # ordering on foreign keys in a cycle. We detect that.
