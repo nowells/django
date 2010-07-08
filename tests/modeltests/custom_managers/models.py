@@ -58,6 +58,28 @@ class Car(models.Model):
     def __unicode__(self):
         return self.name
 
+class Artist(models.Model):
+    name = models.CharField(max_length=50)
+    songs = models.ManyToManyField('Song', blank=True, related_name='artists')
+    best_songs = models.ManyToManyField('Song', blank=True)
+
+    def __unicode__(self):
+        return self.name
+
+class Album(models.Model):
+    artist = models.ForeignKey(Artist, related_name='albums')
+    name = models.CharField(max_length=50)
+
+    def __unicode__(self):
+        return self.name
+
+class Song(models.Model):
+    album = models.ForeignKey(Album)
+    name = models.CharField(max_length=50)
+
+    def __unicode__(self):
+        return self.name
+
 __test__ = {'API_TESTS':"""
 >>> p1 = Person(first_name='Bugs', last_name='Bunny', fun=True)
 >>> p1.save()
@@ -104,4 +126,32 @@ True
 # to the first manager defined in the class. In this case, it's "cars".
 >>> Car._default_manager.order_by('name')
 [<Car: Corvette>, <Car: Neon>]
+
+# Test that each manager descriptor sets the appropriate values for the model_field_name, related_field_name, related_instance
+>>> a1 = Artist.objects.create(name='Queen')
+>>> b1 = Album.objects.create(artist=a1, name='A Kind of Magic')
+>>> s1 = Song.objects.create(album=b1, name='Princes of the Universe')
+>>> a1.songs.add(s1)
+>>> a1.best_songs.add(s1)
+
+>>> a1.songs.model_field_name
+'artists'
+>>> a1.songs.related_model_instance
+<Artist: Queen>
+>>> a1.songs.related_model_field_name
+'songs'
+
+>>> a1.best_songs.model_field_name
+'artist_set'
+>>> a1.best_songs.related_model_instance
+<Artist: Queen>
+>>> a1.best_songs.related_model_field_name
+'best_songs'
+
+>>> a1.albums.model_field_name
+'artist'
+>>> a1.albums.related_model_instance
+<Artist: Queen>
+>>> a1.albums.related_model_field_name
+'albums'
 """}

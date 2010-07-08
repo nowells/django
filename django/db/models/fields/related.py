@@ -725,7 +725,7 @@ class ReverseManyRelatedObjectsDescriptor(object):
             target_field_name=self.field.m2m_reverse_field_name(),
             reverse=False
         )
-        manager.model_field_name = self.field.related_query_name()
+        manager.model_field_name = self.field.related.get_accessor_name()
         manager.related_model_instance = instance
         manager.related_model_field_name = self.field.attname
 
