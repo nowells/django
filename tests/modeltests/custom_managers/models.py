@@ -58,10 +58,26 @@ class Car(models.Model):
     def __unicode__(self):
         return self.name
 
+class ArtistManager(models.Manager):
+    use_for_related_fields = True
+
+    def get_query_set(self, *args, **kwargs):
+        results = super(ArtistManager, self).get_query_set(*args, **kwargs)
+        for result in results:
+            result.exposed_manager_data_for_tests = {
+                'model_field_name': self.model_field_name,
+                'related_model_instance': self.related_model_instance,
+                'related_model_field_name': self.related_model_field_name,
+                }
+        return results
+
 class Artist(models.Model):
     name = models.CharField(max_length=50)
     songs = models.ManyToManyField('Song', blank=True, related_name='artists')
     best_songs = models.ManyToManyField('Song', blank=True)
+
+    _default_manager = ArtistManager()
+    objects = ArtistManager()
 
     def __unicode__(self):
         return self.name
@@ -128,30 +144,44 @@ True
 [<Car: Corvette>, <Car: Neon>]
 
 # Test that each manager descriptor sets the appropriate values for the model_field_name, related_field_name, related_instance
->>> a1 = Artist.objects.create(name='Queen')
->>> b1 = Album.objects.create(artist=a1, name='A Kind of Magic')
->>> s1 = Song.objects.create(album=b1, name='Princes of the Universe')
->>> a1.songs.add(s1)
->>> a1.best_songs.add(s1)
+>>> d1 = Artist.objects.create(name='Queen')
+>>> e1 = Album.objects.create(artist=d1, name='A Kind of Magic')
+>>> f1 = Song.objects.create(album=e1, name='Princes of the Universe')
+>>> d1.songs.add(f1)
+>>> d1.best_songs.add(f1)
 
->>> a1.songs.model_field_name
+>>> d1.songs.model_field_name
 'artists'
->>> a1.songs.related_model_instance
+>>> d1.songs.related_model_instance
 <Artist: Queen>
->>> a1.songs.related_model_field_name
+>>> d1.songs.related_model_field_name
 'songs'
 
->>> a1.best_songs.model_field_name
+>>> d1.best_songs.model_field_name
 'artist_set'
->>> a1.best_songs.related_model_instance
+>>> d1.best_songs.related_model_instance
 <Artist: Queen>
->>> a1.best_songs.related_model_field_name
+>>> d1.best_songs.related_model_field_name
 'best_songs'
 
->>> a1.albums.model_field_name
+>>> d1.albums.model_field_name
 'artist'
->>> a1.albums.related_model_instance
+>>> d1.albums.related_model_instance
 <Artist: Queen>
->>> a1.albums.related_model_field_name
+>>> d1.albums.related_model_field_name
 'albums'
+
+>>> f1.artists.model_field_name
+'songs'
+>>> f1.artists.related_model_instance
+<Song: Princes of the Universe>
+>>> f1.artists.related_model_field_name
+'artists'
+
+>>> e1.artist.exposed_manager_data_for_tests['model_field_name']
+'albumns'
+>>> e1.artist.exposed_manager_data_for_tests['related_model_instance']
+<Album: A Kind of Magic>
+>>> e1.artist.exposed_manager_data_for_tests['related_model_field_name']
+'artist'
 """}

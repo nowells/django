@@ -672,7 +672,7 @@ class ManyRelatedObjectsDescriptor(object):
         )
         manager.model_field_name = self.related.field.name
         manager.related_model_instance = instance
-        manager.related_model_field_name = self.related.field.m2m_reverse_name()
+        manager.related_model_field_name = self.related.get_accessor_name()
 
         return manager
 
