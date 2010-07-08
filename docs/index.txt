@@ -140,6 +140,9 @@ The development process
       :ref:`Overview <topics-settings>` |
       :ref:`Full list of settings <ref-settings>`
 
+    * **Exceptions:**
+      :ref:`Overview <ref-exceptions>`
+
     * **django-admin.py and manage.py:**
       :ref:`Overview <ref-django-admin>` |
       :ref:`Adding custom commands <howto-custom-management-commands>`
@@ -168,6 +171,7 @@ Other batteries included
     * :ref:`Databrowse <ref-contrib-databrowse>`
     * :ref:`E-mail (sending) <topics-email>`
     * :ref:`Flatpages <ref-contrib-flatpages>`
+    * :ref:`GeoDjango <ref-contrib-gis>`
     * :ref:`Humanize <ref-contrib-humanize>`
     * :ref:`Internationalization <topics-i18n>`
     * :ref:`Jython support <howto-jython>`

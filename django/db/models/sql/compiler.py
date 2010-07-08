@@ -14,10 +14,6 @@ class SQLCompiler(object):
         self.using = using
         self.quote_cache = {}
 
-        # Check that the compiler will be able to execute the query
-        for alias, aggregate in self.query.aggregate_select.items():
-            self.connection.ops.check_aggregate_support(aggregate)
-
     def pre_sql_setup(self):
         """
         Does any necessary class setup immediately prior to producing SQL. This
@@ -124,13 +120,15 @@ class SQLCompiler(object):
         """
         Perform the same functionality as the as_sql() method, returning an
         SQL string and parameters. However, the alias prefixes are bumped
-        beforehand (in a copy -- the current query isn't changed) and any
-        ordering is removed.
+        beforehand (in a copy -- the current query isn't changed), and any
+        ordering is removed if the query is unsliced.
 
         Used when nesting this query inside another.
         """
         obj = self.query.clone()
-        obj.clear_ordering(True)
+        if obj.low_mark == 0 and obj.high_mark is None:
+            # If there is no slicing in use, then we can safely drop all ordering
+            obj.clear_ordering(True)
         obj.bump_prefix()
         return obj.get_compiler(connection=self.connection).as_sql()
 
@@ -484,7 +482,7 @@ class SQLCompiler(object):
                 elif hasattr(col, 'as_sql'):
                     result.append(col.as_sql(qn))
                 else:
-                    result.append(str(col))
+                    result.append('(%s)' % str(col))
         return result, params
 
     def fill_related_selections(self, opts=None, root_alias=None, cur_depth=1,
@@ -548,8 +546,8 @@ class SQLCompiler(object):
                     lhs_col = int_opts.parents[int_model].column
                     dedupe = lhs_col in opts.duplicate_targets
                     if dedupe:
-                        avoid.update(self.query.dupe_avoidance.get(id(opts), lhs_col),
-                                ())
+                        avoid.update(self.query.dupe_avoidance.get((id(opts), lhs_col),
+                                ()))
                         dupe_set.add((opts, lhs_col))
                     int_opts = int_model._meta
                     alias = self.query.join((alias, int_opts.db_table, lhs_col,
@@ -622,8 +620,8 @@ class SQLCompiler(object):
                         lhs_col = int_opts.parents[int_model].column
                         dedupe = lhs_col in opts.duplicate_targets
                         if dedupe:
-                            avoid.update(self.query.dupe_avoidance.get(id(opts), lhs_col),
-                                ())
+                            avoid.update((self.query.dupe_avoidance.get(id(opts), lhs_col),
+                                ()))
                             dupe_set.add((opts, lhs_col))
                         int_opts = int_model._meta
                         alias = self.query.join(

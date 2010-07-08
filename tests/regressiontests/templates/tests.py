@@ -7,6 +7,7 @@ if __name__ == '__main__':
     settings.configure()
 
 from datetime import datetime, timedelta
+import time
 import os
 import sys
 import traceback
@@ -96,6 +97,17 @@ class SomeClass:
 class OtherClass:
     def method(self):
         return "OtherClass.method"
+
+class TestObj(object):
+    def is_true(self):
+        return True
+
+    def is_false(self):
+        return False
+
+    def is_bad(self):
+        time.sleep(0.3)
+        return True
 
 class SilentGetItemClass(object):
     def __getitem__(self, key):
@@ -205,20 +217,20 @@ class Templates(unittest.TestCase):
 
     def test_extends_include_missing_baseloader(self):
         """
-        Tests that the correct template is identified as not existing 
-        when {% extends %} specifies a template that does exist, but 
+        Tests that the correct template is identified as not existing
+        when {% extends %} specifies a template that does exist, but
         that template has an {% include %} of something that does not
         exist. See #12787.
         """
 
-        # TEMPLATE_DEBUG must be true, otherwise the exception raised 
+        # TEMPLATE_DEBUG must be true, otherwise the exception raised
         # during {% include %} processing will be suppressed.
         old_td, settings.TEMPLATE_DEBUG = settings.TEMPLATE_DEBUG, True
         old_loaders = loader.template_source_loaders
 
         try:
-            # Test the base loader class via the app loader. load_template 
-            # from base is used by all shipped loaders excepting cached, 
+            # Test the base loader class via the app loader. load_template
+            # from base is used by all shipped loaders excepting cached,
             # which has its own test.
             loader.template_source_loaders = (app_directories.Loader(),)
 
@@ -237,7 +249,7 @@ class Templates(unittest.TestCase):
 
     def test_extends_include_missing_cachedloader(self):
         """
-        Same as test_extends_include_missing_baseloader, only tests 
+        Same as test_extends_include_missing_baseloader, only tests
         behavior of the cached loader instead of BaseLoader.
         """
 
@@ -342,6 +354,11 @@ class Templates(unittest.TestCase):
         old_invalid = settings.TEMPLATE_STRING_IF_INVALID
         expected_invalid_str = 'INVALID'
 
+        # Warm the URL reversing cache. This ensures we don't pay the cost
+        # warming the cache during one of the tests.
+        urlresolvers.reverse('regressiontests.templates.views.client_action',
+                             kwargs={'id':0,'action':"update"})
+
         for name, vals in tests:
             if isinstance(vals[2], tuple):
                 normal_string_result = vals[2][0]
@@ -364,8 +381,17 @@ class Templates(unittest.TestCase):
                 settings.TEMPLATE_STRING_IF_INVALID = invalid_str
                 for is_cached in (False, True):
                     try:
+                        start = datetime.now()
                         test_template = loader.get_template(name)
+                        end = datetime.now()
+                        if end-start > timedelta(seconds=0.2):
+                            failures.append("Template test (Cached='%s', TEMPLATE_STRING_IF_INVALID='%s'): %s -- FAILED. Took too long to parse test" % (is_cached, invalid_str, name))
+
+                        start = datetime.now()
                         output = self.render(test_template, vals)
+                        end = datetime.now()
+                        if end-start > timedelta(seconds=0.2):
+                            failures.append("Template test (Cached='%s', TEMPLATE_STRING_IF_INVALID='%s'): %s -- FAILED. Took too long to render test" % (is_cached, invalid_str, name))
                     except ContextStackException:
                         failures.append("Template test (Cached='%s', TEMPLATE_STRING_IF_INVALID='%s'): %s -- FAILED. Context stack was left imbalanced" % (is_cached, invalid_str, name))
                         continue
@@ -778,6 +804,19 @@ class Templates(unittest.TestCase):
             'if-tag-error11': ("{% if 1 == %}yes{% endif %}", {}, template.TemplateSyntaxError),
             'if-tag-error12': ("{% if a not b %}yes{% endif %}", {}, template.TemplateSyntaxError),
 
+            # If evaluations are shortcircuited where possible
+            # These tests will fail by taking too long to run. When the if clause
+            # is shortcircuiting correctly, the is_bad() function shouldn't be
+            # evaluated, and the deliberate sleep won't happen.
+            'if-tag-shortcircuit01': ('{% if x.is_true or x.is_bad %}yes{% else %}no{% endif %}', {'x': TestObj()}, "yes"),
+            'if-tag-shortcircuit02': ('{% if x.is_false and x.is_bad %}yes{% else %}no{% endif %}', {'x': TestObj()}, "no"),
+
+            # Non-existent args
+            'if-tag-badarg01':("{% if x|default_if_none:y %}yes{% endif %}", {}, ''),
+            'if-tag-badarg02':("{% if x|default_if_none:y %}yes{% endif %}", {'y': 0}, ''),
+            'if-tag-badarg03':("{% if x|default_if_none:y %}yes{% endif %}", {'y': 1}, 'yes'),
+            'if-tag-badarg04':("{% if x|default_if_none:y %}yes{% else %}no{% endif %}", {}, 'no'),
+
             # Additional, more precise parsing tests are in SmartIfTests
 
             ### IFCHANGED TAG #########################################################
@@ -1173,9 +1212,22 @@ class Templates(unittest.TestCase):
 
             ### URL TAG ########################################################
             # Successes
+            'legacyurl02': ('{% url regressiontests.templates.views.client_action id=client.id,action="update" %}', {'client': {'id': 1}}, '/url_tag/client/1/update/'),
+            'legacyurl02a': ('{% url regressiontests.templates.views.client_action client.id,"update" %}', {'client': {'id': 1}}, '/url_tag/client/1/update/'),
+            'legacyurl02b': ("{% url regressiontests.templates.views.client_action id=client.id,action='update' %}", {'client': {'id': 1}}, '/url_tag/client/1/update/'),
+            'legacyurl02c': ("{% url regressiontests.templates.views.client_action client.id,'update' %}", {'client': {'id': 1}}, '/url_tag/client/1/update/'),
+            'legacyurl10': ('{% url regressiontests.templates.views.client_action id=client.id,action="two words" %}', {'client': {'id': 1}}, '/url_tag/client/1/two%20words/'),
+            'legacyurl13': ('{% url regressiontests.templates.views.client_action id=client.id, action=arg|join:"-" %}', {'client': {'id': 1}, 'arg':['a','b']}, '/url_tag/client/1/a-b/'),
+            'legacyurl14': ('{% url regressiontests.templates.views.client_action client.id, arg|join:"-" %}', {'client': {'id': 1}, 'arg':['a','b']}, '/url_tag/client/1/a-b/'),
+            'legacyurl16': ('{% url regressiontests.templates.views.client_action action="update",id="1" %}', {}, '/url_tag/client/1/update/'),
+            'legacyurl16a': ("{% url regressiontests.templates.views.client_action action='update',id='1' %}", {}, '/url_tag/client/1/update/'),
+            'legacyurl17': ('{% url regressiontests.templates.views.client_action client_id=client.my_id,action=action %}', {'client': {'my_id': 1}, 'action': 'update'}, '/url_tag/client/1/update/'),
+
             'url01': ('{% url regressiontests.templates.views.client client.id %}', {'client': {'id': 1}}, '/url_tag/client/1/'),
-            'url02': ('{% url regressiontests.templates.views.client_action id=client.id,action="update" %}', {'client': {'id': 1}}, '/url_tag/client/1/update/'),
-            'url02a': ('{% url regressiontests.templates.views.client_action client.id,"update" %}', {'client': {'id': 1}}, '/url_tag/client/1/update/'),
+            'url02': ('{% url regressiontests.templates.views.client_action id=client.id action="update" %}', {'client': {'id': 1}}, '/url_tag/client/1/update/'),
+            'url02a': ('{% url regressiontests.templates.views.client_action client.id "update" %}', {'client': {'id': 1}}, '/url_tag/client/1/update/'),
+            'url02b': ("{% url regressiontests.templates.views.client_action id=client.id action='update' %}", {'client': {'id': 1}}, '/url_tag/client/1/update/'),
+            'url02c': ("{% url regressiontests.templates.views.client_action client.id 'update' %}", {'client': {'id': 1}}, '/url_tag/client/1/update/'),
             'url03': ('{% url regressiontests.templates.views.index %}', {}, '/url_tag/'),
             'url04': ('{% url named.client client.id %}', {'client': {'id': 1}}, '/url_tag/named-client/1/'),
             'url05': (u'{% url метка_оператора v %}', {'v': u'Ω'}, '/url_tag/%D0%AE%D0%BD%D0%B8%D0%BA%D0%BE%D0%B4/%CE%A9/'),
@@ -1183,10 +1235,13 @@ class Templates(unittest.TestCase):
             'url07': (u'{% url regressiontests.templates.views.client2 tag=v %}', {'v': u'Ω'}, '/url_tag/%D0%AE%D0%BD%D0%B8%D0%BA%D0%BE%D0%B4/%CE%A9/'),
             'url08': (u'{% url метка_оператора v %}', {'v': 'Ω'}, '/url_tag/%D0%AE%D0%BD%D0%B8%D0%BA%D0%BE%D0%B4/%CE%A9/'),
             'url09': (u'{% url метка_оператора_2 tag=v %}', {'v': 'Ω'}, '/url_tag/%D0%AE%D0%BD%D0%B8%D0%BA%D0%BE%D0%B4/%CE%A9/'),
-            'url10': ('{% url regressiontests.templates.views.client_action id=client.id,action="two words" %}', {'client': {'id': 1}}, '/url_tag/client/1/two%20words/'),
-            'url11': ('{% url regressiontests.templates.views.client_action id=client.id,action="==" %}', {'client': {'id': 1}}, '/url_tag/client/1/==/'),
-            'url12': ('{% url regressiontests.templates.views.client_action id=client.id,action="," %}', {'client': {'id': 1}}, '/url_tag/client/1/,/'),
-            'url12': ('{% url regressiontests.templates.views.client_action id=client.id,action=arg|join:"-" %}', {'client': {'id': 1}, 'arg':['a','b']}, '/url_tag/client/1/a-b/'),
+            'url10': ('{% url regressiontests.templates.views.client_action id=client.id action="two words" %}', {'client': {'id': 1}}, '/url_tag/client/1/two%20words/'),
+            'url11': ('{% url regressiontests.templates.views.client_action id=client.id action="==" %}', {'client': {'id': 1}}, '/url_tag/client/1/==/'),
+            'url12': ('{% url regressiontests.templates.views.client_action id=client.id action="," %}', {'client': {'id': 1}}, '/url_tag/client/1/,/'),
+            'url13': ('{% url regressiontests.templates.views.client_action id=client.id action=arg|join:"-" %}', {'client': {'id': 1}, 'arg':['a','b']}, '/url_tag/client/1/a-b/'),
+            'url14': ('{% url regressiontests.templates.views.client_action client.id arg|join:"-" %}', {'client': {'id': 1}, 'arg':['a','b']}, '/url_tag/client/1/a-b/'),
+            'url15': ('{% url regressiontests.templates.views.client_action 12 "test" %}', {}, '/url_tag/client/12/test/'),
+            'url18': ('{% url regressiontests.templates.views.client "1,2" %}', {}, '/url_tag/client/1,2/'),
 
             # Failures
             'url-fail01': ('{% url %}', {}, template.TemplateSyntaxError),
@@ -1260,6 +1315,49 @@ class Templates(unittest.TestCase):
             # tags can be used in those cases)
             'autoescape-filtertag01': ("{{ first }}{% filter safe %}{{ first }} x<y{% endfilter %}", {"first": "<a>"}, template.TemplateSyntaxError),
         }
+
+
+class TemplateTagLoading(unittest.TestCase):
+
+    def setUp(self):
+        self.old_path = sys.path
+        self.old_apps = settings.INSTALLED_APPS
+        self.egg_dir = '%s/eggs' % os.path.dirname(__file__)
+        self.old_tag_modules = template.templatetags_modules
+        template.templatetags_modules = []
+
+    def tearDown(self):
+        settings.INSTALLED_APPS = self.old_apps
+        sys.path = self.old_path
+        template.templatetags_modules = self.old_tag_modules
+
+    def test_load_error(self):
+        ttext = "{% load broken_tag %}"
+        self.assertRaises(template.TemplateSyntaxError, template.Template, ttext)
+        try:
+            template.Template(ttext)
+        except template.TemplateSyntaxError, e:
+            self.assertTrue('ImportError' in e.args[0])
+            self.assertTrue('Xtemplate' in e.args[0])
+
+    def test_load_error_egg(self):
+        ttext = "{% load broken_egg %}"
+        egg_name = '%s/tagsegg.egg' % self.egg_dir
+        sys.path.append(egg_name)
+        settings.INSTALLED_APPS = ('tagsegg',)
+        self.assertRaises(template.TemplateSyntaxError, template.Template, ttext)
+        try:
+            template.Template(ttext)
+        except template.TemplateSyntaxError, e:
+            self.assertTrue('ImportError' in e.args[0])
+            self.assertTrue('Xtemplate' in e.args[0])
+
+    def test_load_working_egg(self):
+        ttext = "{% load working_egg %}"
+        egg_name = '%s/tagsegg.egg' % self.egg_dir
+        sys.path.append(egg_name)
+        settings.INSTALLED_APPS = ('tagsegg',)
+        t = template.Template(ttext)
 
 if __name__ == "__main__":
     unittest.main()

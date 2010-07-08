@@ -20,7 +20,7 @@ but we'll look at how to do so later.
 
 >>> formset = ChoiceFormSet(auto_id=False, prefix='choices')
 >>> print formset
-<input type="hidden" name="choices-TOTAL_FORMS" value="1" /><input type="hidden" name="choices-INITIAL_FORMS" value="0" /><input type="hidden" name="choices-MAX_NUM_FORMS" value="0" />
+<input type="hidden" name="choices-TOTAL_FORMS" value="1" /><input type="hidden" name="choices-INITIAL_FORMS" value="0" /><input type="hidden" name="choices-MAX_NUM_FORMS" />
 <tr><th>Choice:</th><td><input type="text" name="choices-0-choice" /></td></tr>
 <tr><th>Votes:</th><td><input type="text" name="choices-0-votes" /></td></tr>
 
@@ -599,6 +599,24 @@ True
 
 # Base case for max_num.
 
+# When not passed, max_num will take its default value of None, i.e. unlimited
+# number of forms, only controlled by the value of the extra parameter.
+
+>>> LimitedFavoriteDrinkFormSet = formset_factory(FavoriteDrinkForm, extra=3)
+>>> formset = LimitedFavoriteDrinkFormSet()
+>>> for form in formset.forms:
+...     print form
+<tr><th><label for="id_form-0-name">Name:</label></th><td><input type="text" name="form-0-name" id="id_form-0-name" /></td></tr>
+<tr><th><label for="id_form-1-name">Name:</label></th><td><input type="text" name="form-1-name" id="id_form-1-name" /></td></tr>
+<tr><th><label for="id_form-2-name">Name:</label></th><td><input type="text" name="form-2-name" id="id_form-2-name" /></td></tr>
+
+# If max_num is 0 then no form is rendered at all.
+
+>>> LimitedFavoriteDrinkFormSet = formset_factory(FavoriteDrinkForm, extra=3, max_num=0)
+>>> formset = LimitedFavoriteDrinkFormSet()
+>>> for form in formset.forms:
+...     print form
+
 >>> LimitedFavoriteDrinkFormSet = formset_factory(FavoriteDrinkForm, extra=5, max_num=2)
 >>> formset = LimitedFavoriteDrinkFormSet()
 >>> for form in formset.forms:
@@ -606,7 +624,7 @@ True
 <tr><th><label for="id_form-0-name">Name:</label></th><td><input type="text" name="form-0-name" id="id_form-0-name" /></td></tr>
 <tr><th><label for="id_form-1-name">Name:</label></th><td><input type="text" name="form-1-name" id="id_form-1-name" /></td></tr>
 
-# Ensure the that max_num has no affect when extra is less than max_forms.
+# Ensure that max_num has no effect when extra is less than max_num.
 
 >>> LimitedFavoriteDrinkFormSet = formset_factory(FavoriteDrinkForm, extra=1, max_num=2)
 >>> formset = LimitedFavoriteDrinkFormSet()
@@ -615,6 +633,32 @@ True
 <tr><th><label for="id_form-0-name">Name:</label></th><td><input type="text" name="form-0-name" id="id_form-0-name" /></td></tr>
 
 # max_num with initial data
+
+# When not passed, max_num will take its default value of None, i.e. unlimited
+# number of forms, only controlled by the values of the initial and extra
+# parameters.
+
+>>> initial = [
+...     {'name': 'Fernet and Coke'},
+... ]
+>>> LimitedFavoriteDrinkFormSet = formset_factory(FavoriteDrinkForm, extra=1)
+>>> formset = LimitedFavoriteDrinkFormSet(initial=initial)
+>>> for form in formset.forms:
+...     print form
+<tr><th><label for="id_form-0-name">Name:</label></th><td><input type="text" name="form-0-name" value="Fernet and Coke" id="id_form-0-name" /></td></tr>
+<tr><th><label for="id_form-1-name">Name:</label></th><td><input type="text" name="form-1-name" id="id_form-1-name" /></td></tr>
+
+# If max_num is 0 then no form is rendered at all, even if extra and initial
+# are specified.
+
+>>> initial = [
+...     {'name': 'Fernet and Coke'},
+...     {'name': 'Bloody Mary'},
+... ]
+>>> LimitedFavoriteDrinkFormSet = formset_factory(FavoriteDrinkForm, extra=1, max_num=0)
+>>> formset = LimitedFavoriteDrinkFormSet(initial=initial)
+>>> for form in formset.forms:
+...     print form
 
 # More initial forms than max_num will result in only the first max_num of
 # them to be displayed with no extra forms.

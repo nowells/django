@@ -18,11 +18,6 @@ from widgets import SelectMultiple, HiddenInput, MultipleHiddenInput
 from widgets import media_property
 from formsets import BaseFormSet, formset_factory, DELETION_FIELD_NAME
 
-try:
-    set
-except NameError:
-    from sets import Set as set     # Python 2.3 fallback
-
 __all__ = (
     'ModelForm', 'BaseModelForm', 'model_to_dict', 'fields_for_model',
     'save_instance', 'form_for_fields', 'ModelChoiceField',
@@ -167,6 +162,7 @@ def fields_for_model(model, fields=None, exclude=None, widgets=None, formfield_c
     in the ``fields`` argument.
     """
     field_list = []
+    ignored = []
     opts = model._meta
     for f in opts.fields + opts.many_to_many:
         if not f.editable:
@@ -182,9 +178,14 @@ def fields_for_model(model, fields=None, exclude=None, widgets=None, formfield_c
         formfield = formfield_callback(f, **kwargs)
         if formfield:
             field_list.append((f.name, formfield))
+        else:
+            ignored.append(f.name)
     field_dict = SortedDict(field_list)
     if fields:
-        field_dict = SortedDict([(f, field_dict.get(f)) for f in fields if (not exclude) or (exclude and f not in exclude)])
+        field_dict = SortedDict(
+            [(f, field_dict.get(f)) for f in fields
+                if ((not exclude) or (exclude and f not in exclude)) and (f not in ignored)]
+        )
     return field_dict
 
 class ModelFormOptions(object):
@@ -310,11 +311,22 @@ class BaseModelForm(BaseForm):
         return self.cleaned_data
 
     def _post_clean(self):
-        exclude = self._get_validation_exclusions()
         opts = self._meta
-
         # Update the model instance with self.cleaned_data.
         self.instance = construct_instance(self, self.instance, opts.fields, opts.exclude)
+
+        exclude = self._get_validation_exclusions()
+
+        # Foreign Keys being used to represent inline relationships
+        # are excluded from basic field value validation. This is for two
+        # reasons: firstly, the value may not be supplied (#12507; the
+        # case of providing new values to the admin); secondly the
+        # object being referred to may not yet fully exist (#12749).
+        # However, these fields *must* be included in uniqueness checks,
+        # so this can't be part of _get_validation_exclusions().
+        for f_name, field in self.fields.items():
+            if isinstance(field, InlineForeignKeyField):
+                exclude.append(f_name)
 
         # Clean the model instance's fields.
         try:
@@ -448,10 +460,10 @@ class BaseModelFormSet(BaseFormSet):
             if not qs.ordered:
                 qs = qs.order_by(self.model._meta.pk.name)
 
-            if self.max_num > 0:
-                self._queryset = qs[:self.max_num]
-            else:
-                self._queryset = qs
+            # Removed queryset limiting here. As per discussion re: #13023
+            # on django-dev, max_num should not prevent existing
+            # related objects/inlines from being displayed.
+            self._queryset = qs
         return self._queryset
 
     def save_new(self, form, commit=True):
@@ -649,7 +661,7 @@ class BaseModelFormSet(BaseFormSet):
 def modelformset_factory(model, form=ModelForm, formfield_callback=lambda f: f.formfield(),
                          formset=BaseModelFormSet,
                          extra=1, can_delete=False, can_order=False,
-                         max_num=0, fields=None, exclude=None):
+                         max_num=None, fields=None, exclude=None):
     """
     Returns a FormSet class for the given Django model class.
     """
@@ -712,7 +724,7 @@ class BaseInlineFormSet(BaseModelFormSet):
     #@classmethod
     def get_default_prefix(cls):
         from django.db.models.fields.related import RelatedObject
-        return RelatedObject(cls.fk.rel.to, cls.model, cls.fk).get_accessor_name()
+        return RelatedObject(cls.fk.rel.to, cls.model, cls.fk).get_accessor_name().replace('+','')
     get_default_prefix = classmethod(get_default_prefix)
 
     def save_new(self, form, commit=True):
@@ -755,6 +767,7 @@ class BaseInlineFormSet(BaseModelFormSet):
     def get_unique_error_message(self, unique_check):
         unique_check = [field for field in unique_check if field != self.fk.name]
         return super(BaseInlineFormSet, self).get_unique_error_message(unique_check)
+
 
 def _get_foreign_key(parent_model, model, fk_name=None, can_fail=False):
     """
@@ -799,7 +812,7 @@ def _get_foreign_key(parent_model, model, fk_name=None, can_fail=False):
 def inlineformset_factory(parent_model, model, form=ModelForm,
                           formset=BaseInlineFormSet, fk_name=None,
                           fields=None, exclude=None,
-                          extra=3, can_order=False, can_delete=True, max_num=0,
+                          extra=3, can_order=False, can_delete=True, max_num=None,
                           formfield_callback=lambda f: f.formfield()):
     """
     Returns an ``InlineFormSet`` for the given kwargs.

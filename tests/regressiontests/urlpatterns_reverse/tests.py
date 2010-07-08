@@ -17,6 +17,8 @@ ImproperlyConfigured: The included urlconf regressiontests.urlpatterns_reverse.n
 import unittest
 
 from django.conf import settings
+
+from django.core.exceptions import ImproperlyConfigured
 from django.core.urlresolvers import backtracking_resolve, reverse, resolve, NoReverseMatch, Resolver404
 from django.http import HttpResponseRedirect, HttpResponsePermanentRedirect
 from django.shortcuts import redirect
@@ -120,10 +122,10 @@ class URLPatternReverse(TestCase):
 
 class BacktrackingUrlTests(TestCase):
     urls = 'regressiontests.urlpatterns_reverse.backtracking_urls'
-    
+
     def test_backtracking_normal_reverse(self):
         self.assertEqual(reverse('backtracking_view'), '/backtrack/')
-    
+
     def test_backtracking_normal_resolve(self):
         r = backtracking_resolve('/backtrack/')
         first = r.next()
@@ -295,16 +297,22 @@ class RequestURLconfTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, 'outer:,inner:/second_test/')
 
+    def test_urlconf_overridden_with_null(self):
+        settings.MIDDLEWARE_CLASSES += (
+            '%s.NullChangeURLconfMiddleware' % middleware.__name__,
+        )
+        self.assertRaises(ImproperlyConfigured, self.client.get, '/test/me/')
+
 class ErrorHandlerResolutionTests(TestCase):
     """Tests for handler404 and handler500"""
-    
+
     def setUp(self):
         from django.core.urlresolvers import RegexURLResolver
         urlconf = 'regressiontests.urlpatterns_reverse.urls_error_handlers'
         urlconf_callables = 'regressiontests.urlpatterns_reverse.urls_error_handlers_callables'
         self.resolver = RegexURLResolver(r'^$', urlconf)
         self.callable_resolver = RegexURLResolver(r'^$', urlconf_callables)
-    
+
     def test_named_handlers(self):
         from views import empty_view
         handler = (empty_view, {})
@@ -316,3 +324,10 @@ class ErrorHandlerResolutionTests(TestCase):
         handler = (empty_view, {})
         self.assertEqual(self.callable_resolver.resolve404(), handler)
         self.assertEqual(self.callable_resolver.resolve500(), handler)
+
+class NoRootUrlConfTests(TestCase):
+    """Tests for handler404 and handler500 if urlconf is None"""
+    urls = None
+
+    def test_no_handler_exception(self):
+        self.assertRaises(ImproperlyConfigured, self.client.get, '/test/me/')

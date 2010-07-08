@@ -2,8 +2,8 @@
 
 import re
 import datetime
+from django.conf import settings
 from django.core.files import temp as tempfile
-from django.test import TestCase
 from django.contrib.auth import admin # Register auth models with the admin.
 from django.contrib.auth.models import User, Permission, UNUSABLE_PASSWORD
 from django.contrib.contenttypes.models import ContentType
@@ -12,15 +12,16 @@ from django.contrib.admin.sites import LOGIN_FORM_KEY
 from django.contrib.admin.util import quote
 from django.contrib.admin.helpers import ACTION_CHECKBOX_NAME
 from django.forms.util import ErrorList
+from django.test import TestCase
 from django.utils import formats
 from django.utils.cache import get_max_age
-from django.utils.html import escape
-from django.utils.translation import get_date_formats
 from django.utils.encoding import iri_to_uri
+from django.utils.html import escape
+from django.utils.translation import get_date_formats, activate, deactivate
 
 # local test models
 from models import Article, BarAccount, CustomArticle, EmptyModel, \
-    ExternalSubscriber, FooAccount, Gallery, ModelWithStringPrimaryKey, \
+    FooAccount, Gallery, ModelWithStringPrimaryKey, \
     Person, Persona, Picture, Podcast, Section, Subscriber, Vodcast, \
     Language, Collector, Widget, Grommet, DooHickey, FancyDoodad, Whatsit, \
     Category, Post, Plot, FunkyTag
@@ -35,9 +36,11 @@ class AdminViewBasicTest(TestCase):
     urlbit = 'admin'
 
     def setUp(self):
+        self.old_language_code = settings.LANGUAGE_CODE
         self.client.login(username='super', password='secret')
 
     def tearDown(self):
+        settings.LANGUAGE_CODE = self.old_language_code
         self.client.logout()
 
     def testTrailingSlashRequired(self):
@@ -270,6 +273,30 @@ class AdminViewBasicTest(TestCase):
         # Post model).
         response = self.client.get("/test_admin/admin/admin_views/post/")
         self.failUnless('icon-unknown.gif' in response.content)
+
+    def testI18NLanguageNonEnglishDefault(self):
+        """
+        Check if the Javascript i18n view returns an empty language catalog
+        if the default language is non-English but the selected language
+        is English. See #13388 and #3594 for more details.
+        """
+        settings.LANGUAGE_CODE = 'fr'
+        activate('en-us')
+        response = self.client.get('/test_admin/admin/jsi18n/')
+        self.assertNotContains(response, 'Choisir une heure')
+        deactivate()
+
+    def testI18NLanguageNonEnglishFallback(self):
+        """
+        Makes sure that the fallback language is still working properly
+        in cases where the selected language cannot be found.
+        """
+        settings.LANGUAGE_CODE = 'fr'
+        activate('none')
+        response = self.client.get('/test_admin/admin/jsi18n/')
+        self.assertContains(response, 'Choisir une heure')
+        deactivate()
+
 
 class SaveAsTests(TestCase):
     fixtures = ['admin-views-users.xml','admin-views-person.xml']
@@ -606,6 +633,12 @@ class AdminViewPermissionsTest(TestCase):
         self.assertTemplateUsed(request, 'custom_admin/change_form.html')
         request = self.client.get('/test_admin/admin/admin_views/customarticle/1/delete/')
         self.assertTemplateUsed(request, 'custom_admin/delete_confirmation.html')
+        request = self.client.post('/test_admin/admin/admin_views/customarticle/', data={
+                'index': 0,
+                'action': ['delete_selected'],
+                '_selected_action': ['1'],
+            })
+        self.assertTemplateUsed(request, 'custom_admin/delete_selected_confirmation.html')
         request = self.client.get('/test_admin/admin/admin_views/customarticle/1/history/')
         self.assertTemplateUsed(request, 'custom_admin/object_history.html')
 
@@ -1085,6 +1118,8 @@ class AdminViewListEditable(TestCase):
             "form-2-alive": "checked",
             "form-2-gender": "1",
             "form-2-id": "3",
+
+            "_save": "Save",
         }
         response = self.client.post('/test_admin/admin/admin_views/person/',
                                     data, follow=True)
@@ -1105,6 +1140,8 @@ class AdminViewListEditable(TestCase):
             "form-2-alive": "checked",
             "form-2-gender": "1",
             "form-2-id": "3",
+
+            "_save": "Save",
         }
         self.client.post('/test_admin/admin/admin_views/person/', data)
 
@@ -1124,6 +1161,8 @@ class AdminViewListEditable(TestCase):
             "form-1-id": "3",
             "form-1-gender": "1",
             "form-1-alive": "checked",
+
+            "_save": "Save",
         }
         self.client.post('/test_admin/admin/admin_views/person/?gender__exact=1', data)
 
@@ -1136,7 +1175,9 @@ class AdminViewListEditable(TestCase):
             "form-MAX_NUM_FORMS": "0",
 
             "form-0-id": "1",
-            "form-0-gender": "1"
+            "form-0-gender": "1",
+
+            "_save": "Save",
         }
         self.client.post('/test_admin/admin/admin_views/person/?q=mauchly', data)
 
@@ -1152,6 +1193,10 @@ class AdminViewListEditable(TestCase):
             "form-0-id": "2",
             "form-0-alive": "1",
             "form-0-gender": "2",
+
+            # Ensure that the form processing understands this as a list_editable "Save"
+            # and not an action "Go".
+            "_save": "Save",
         }
         response = self.client.post('/test_admin/admin/admin_views/person/', data)
         self.assertContains(response, "Grace is not a Zombie")
@@ -1166,6 +1211,8 @@ class AdminViewListEditable(TestCase):
             "form-0-id": "2",
             "form-0-alive": "1",
             "form-0-gender": "2",
+
+            "_save": "Save",
         }
         response = self.client.post('/test_admin/admin/admin_views/person/', data)
         non_form_errors = response.context['cl'].formset.non_form_errors()
@@ -1201,6 +1248,10 @@ class AdminViewListEditable(TestCase):
             "form-3-order": "0",
             "form-3-id": "4",
             "form-3-collector": "1",
+
+            # Ensure that the form processing understands this as a list_editable "Save"
+            # and not an action "Go".
+            "_save": "Save",
         }
         response = self.client.post('/test_admin/admin/admin_views/category/', data)
         # Successful post will redirect
@@ -1211,6 +1262,63 @@ class AdminViewListEditable(TestCase):
         self.failUnlessEqual(Category.objects.get(id=2).order, 13)
         self.failUnlessEqual(Category.objects.get(id=3).order, 1)
         self.failUnlessEqual(Category.objects.get(id=4).order, 0)
+
+    def test_list_editable_action_submit(self):
+        # List editable changes should not be executed if the action "Go" button is
+        # used to submit the form.
+        data = {
+            "form-TOTAL_FORMS": "3",
+            "form-INITIAL_FORMS": "3",
+            "form-MAX_NUM_FORMS": "0",
+
+            "form-0-gender": "1",
+            "form-0-id": "1",
+
+            "form-1-gender": "2",
+            "form-1-id": "2",
+
+            "form-2-alive": "checked",
+            "form-2-gender": "1",
+            "form-2-id": "3",
+
+            "index": "0",
+            "_selected_action": [u'3'],
+            "action": [u'', u'delete_selected'],
+        }
+        self.client.post('/test_admin/admin/admin_views/person/', data)
+
+        self.failUnlessEqual(Person.objects.get(name="John Mauchly").alive, True)
+        self.failUnlessEqual(Person.objects.get(name="Grace Hopper").gender, 1)
+
+    def test_list_editable_action_choices(self):
+        # List editable changes should be executed if the "Save" button is
+        # used to submit the form - any action choices should be ignored.
+        data = {
+            "form-TOTAL_FORMS": "3",
+            "form-INITIAL_FORMS": "3",
+            "form-MAX_NUM_FORMS": "0",
+
+            "form-0-gender": "1",
+            "form-0-id": "1",
+
+            "form-1-gender": "2",
+            "form-1-id": "2",
+
+            "form-2-alive": "checked",
+            "form-2-gender": "1",
+            "form-2-id": "3",
+
+            "_save": "Save",
+            "_selected_action": [u'1'],
+            "action": [u'', u'delete_selected'],
+        }
+        self.client.post('/test_admin/admin/admin_views/person/', data)
+
+        self.failUnlessEqual(Person.objects.get(name="John Mauchly").alive, False)
+        self.failUnlessEqual(Person.objects.get(name="Grace Hopper").gender, 2)
+
+
+
 
 class AdminSearchTest(TestCase):
     fixtures = ['admin-views-users','multiple-child-classes']
@@ -1380,6 +1488,14 @@ class AdminActionsTest(TestCase):
         self.assert_('action-checkbox-column' not in response.content,
             "Found unexpected action-checkbox-column class in response")
 
+    def test_model_without_action_still_has_jquery(self):
+        "Tests that a ModelAdmin without any actions still gets jQuery included in page"
+        response = self.client.get('/test_admin/admin/admin_views/oldsubscriber/')
+        self.assertEquals(response.context["action_form"], None)
+        self.assert_('jquery.min.js' in response.content,
+            "jQuery missing from admin pages for model with no admin actions"
+        )
+
     def test_action_column_class(self):
         "Tests that the checkbox column class is present in the response"
         response = self.client.get('/test_admin/admin/admin_views/subscriber/')
@@ -1437,7 +1553,7 @@ class AdminActionsTest(TestCase):
         Check if the selection counter is there.
         """
         response = self.client.get('/test_admin/admin/admin_views/subscriber/')
-        self.assertContains(response, '<span class="_acnt">0</span> of 2 selected')
+        self.assertContains(response, '0 of 2 selected')
 
 
 class TestCustomChangeList(TestCase):
@@ -1931,7 +2047,7 @@ class NeverCacheTests(TestCase):
 
     def testJsi18n(self):
         "Check the never-cache status of the Javascript i18n view"
-        response = self.client.get('/test_admin/jsi18n/')
+        response = self.client.get('/test_admin/admin/jsi18n/')
         self.failUnlessEqual(get_max_age(response), None)
 
 
@@ -1950,7 +2066,7 @@ class ReadonlyTest(TestCase):
         self.assertNotContains(response, 'name="posted"')
         # 3 fields + 2 submit buttons + 4 inline management form fields, + 2
         # hidden fields for inlines + 1 field for the inline + 2 empty form
-        self.assertEqual(response.content.count("input"), 14)
+        self.assertEqual(response.content.count("<input"), 14)
         self.assertContains(response, formats.localize(datetime.date.today()))
         self.assertContains(response,
             "<label>Awesomeness level:</label>")
@@ -1960,6 +2076,12 @@ class ReadonlyTest(TestCase):
         self.assertContains(response,
             formats.localize(datetime.date.today() - datetime.timedelta(days=7))
         )
+
+        self.assertContains(response, '<div class="form-row coolness">')
+        self.assertContains(response, '<div class="form-row awesomeness_level">')
+        self.assertContains(response, '<div class="form-row posted">')
+        self.assertContains(response, '<div class="form-row value">')
+        self.assertContains(response, '<div class="form-row ">')
 
         p = Post.objects.create(title="I worked on readonly_fields", content="Its good stuff")
         response = self.client.get('/test_admin/admin/admin_views/post/%d/' % p.pk)

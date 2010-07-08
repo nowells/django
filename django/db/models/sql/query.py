@@ -37,8 +37,23 @@ class RawQuery(object):
         self.using = using
         self.cursor = None
 
+        # Mirror some properties of a normal query so that
+        # the compiler can be used to process results.
+        self.low_mark, self.high_mark = 0, None  # Used for offset/limit
+        self.extra_select = {}
+        self.aggregate_select = {}
+
     def clone(self, using):
         return RawQuery(self.sql, using, params=self.params)
+
+    def convert_values(self, value, field, connection):
+        """Convert the database-returned value into a type that is consistent
+        across database backends.
+
+        By default, this defers to the underlying backend operations, but
+        it can be overridden by Query classes for specific backends.
+        """
+        return connection.ops.convert_values(value, field)
 
     def get_columns(self):
         if self.cursor is None:
@@ -56,7 +71,13 @@ class RawQuery(object):
         # Always execute a new query for a new iterator.
         # This could be optimized with a cache at the expense of RAM.
         self._execute_query()
-        return iter(self.cursor)
+        if not connections[self.using].features.can_use_chunked_reads:
+            # If the database can't use chunked reads we need to make sure we
+            # evaluate the entire query up front.
+            result = list(self.cursor)
+        else:
+            result = self.cursor
+        return iter(result)
 
     def __repr__(self):
         return "<RawQuery: %r>" % (self.sql % self.params)
@@ -189,6 +210,11 @@ class Query(object):
             raise ValueError("Need either using or connection")
         if using:
             connection = connections[using]
+
+        # Check that the compiler will be able to execute the query
+        for alias, aggregate in self.aggregate_select.items():
+            connection.ops.check_aggregate_support(aggregate)
+
         return connection.ops.compiler(self.compiler)(self, connection, using)
 
     def get_meta(self):
@@ -530,10 +556,10 @@ class Query(object):
             # models.
             workset = {}
             for model, values in seen.iteritems():
-                for field in model._meta.local_fields:
+                for field, m in model._meta.get_fields_with_model():
                     if field in values:
                         continue
-                    add_to_dict(workset, model, field)
+                    add_to_dict(workset, m or model, field)
             for model, values in must_include.iteritems():
                 # If we haven't included a model in workset, we don't add the
                 # corresponding must_include fields for that model, since an

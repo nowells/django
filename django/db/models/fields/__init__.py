@@ -3,6 +3,7 @@ import decimal
 import re
 import time
 import math
+from itertools import tee
 
 import django.utils.copycompat as copy
 
@@ -14,7 +15,6 @@ from django import forms
 from django.core import exceptions, validators
 from django.utils.datastructures import DictWrapper
 from django.utils.functional import curry
-from django.utils.itercompat import tee
 from django.utils.text import capfirst
 from django.utils.translation import ugettext_lazy as _
 from django.utils.encoding import smart_unicode, force_unicode, smart_str
@@ -118,34 +118,6 @@ class Field(object):
             messages.update(getattr(c, 'default_error_messages', {}))
         messages.update(error_messages or {})
         self.error_messages = messages
-
-    def __getstate__(self):
-        """
-        Pickling support.
-        """
-        from django.utils.functional import Promise
-        obj_dict = self.__dict__.copy()
-        items = []
-        translated_keys = []
-        for k, v in self.error_messages.items():
-            if isinstance(v, Promise):
-                args = getattr(v, '_proxy____args', None)
-                if args:
-                    translated_keys.append(k)
-                    v = args[0]
-            items.append((k,v))
-        obj_dict['_translated_keys'] = translated_keys
-        obj_dict['error_messages'] = dict(items)
-        return obj_dict
-
-    def __setstate__(self, obj_dict):
-        """
-        Unpickling support.
-        """
-        translated_keys = obj_dict.pop('_translated_keys')
-        self.__dict__.update(obj_dict)
-        for k in translated_keys:
-            self.error_messages[k] = _(self.error_messages[k])
 
     def __cmp__(self, other):
         # This is needed because bisect does not take a comparison function.
@@ -261,6 +233,7 @@ class Field(object):
 
     def contribute_to_class(self, cls, name):
         self.set_attributes_from_name(name)
+        self.model = cls
         cls._meta.add_field(self)
         if self.choices:
             setattr(cls, 'get_%s_display' % self.name, curry(cls._get_FIELD_display, field=self))
