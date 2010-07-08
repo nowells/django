@@ -10,6 +10,7 @@ returns.
 """
 
 from django.db import models
+from django.db.models import query
 
 # An example of a custom manager called "objects".
 
@@ -62,14 +63,17 @@ class ArtistManager(models.Manager):
     use_for_related_fields = True
 
     def get_query_set(self, *args, **kwargs):
-        results = super(ArtistManager, self).get_query_set(*args, **kwargs)
-        for result in results:
-            result.exposed_manager_data_for_tests = {
-                'model_field_name': self.model_field_name,
-                'related_model_instance': self.related_model_instance,
-                'related_model_field_name': self.related_model_field_name,
-                }
-        return results
+        # We need to hack this to expose the internal data to the doctest suite.
+        class MockQuerySet(query.QuerySet):
+            def get(slf, *args, **kwargs):
+                result = super(MockQuerySet, slf).get(*args, **kwargs)
+                result.exposed_manager_data_for_tests = {
+                    'model_attname': self.model_attname,
+                    'related_model_instance': self.related_model_instance,
+                    'related_model_attname': self.related_model_attname,
+                    }
+                return result
+        return MockQuerySet(self.model, using=self._db)
 
 class Artist(models.Model):
     name = models.CharField(max_length=50)
@@ -77,7 +81,7 @@ class Artist(models.Model):
     best_songs = models.ManyToManyField('Song', blank=True)
 
     _default_manager = ArtistManager()
-    objects = ArtistManager()
+    objects = models.Manager()
 
     def __unicode__(self):
         return self.name
@@ -143,45 +147,46 @@ True
 >>> Car._default_manager.order_by('name')
 [<Car: Corvette>, <Car: Neon>]
 
-# Test that each manager descriptor sets the appropriate values for the model_field_name, related_model_field_name, related_model_instance
->>> d1 = Artist.objects.create(name='Queen')
->>> e1 = Album.objects.create(artist=d1, name='A Kind of Magic')
->>> f1 = Song.objects.create(album=e1, name='Princes of the Universe')
->>> d1.songs.add(f1)
->>> d1.best_songs.add(f1)
+# Test that each manager descriptor sets the appropriate values for the model_attname, related_model_attname, related_model_instance
+>>> artist1 = Artist.objects.create(name='Queen')
+>>> album1 = Album.objects.create(artist=artist1, name='A Kind of Magic')
+>>> song1 = Song.objects.create(album=album1, name='Princes of the Universe')
+>>> artist1.songs.add(song1)
+>>> artist1.best_songs.add(song1)
 
->>> d1.songs.model_field_name
+>>> artist1.songs.model_attname
 'artists'
->>> d1.songs.related_model_instance
+>>> artist1.songs.related_model_instance
 <Artist: Queen>
->>> d1.songs.related_model_field_name
+>>> artist1.songs.related_model_attname
 'songs'
 
->>> d1.best_songs.model_field_name
+>>> artist1.best_songs.model_attname
 'artist_set'
->>> d1.best_songs.related_model_instance
+>>> artist1.best_songs.related_model_instance
 <Artist: Queen>
->>> d1.best_songs.related_model_field_name
+>>> artist1.best_songs.related_model_attname
 'best_songs'
 
->>> d1.albums.model_field_name
+>>> artist1.albums.model_attname
 'artist'
->>> d1.albums.related_model_instance
+>>> artist1.albums.related_model_instance
 <Artist: Queen>
->>> d1.albums.related_model_field_name
+>>> artist1.albums.related_model_attname
 'albums'
 
->>> f1.artists.model_field_name
+>>> song1.artists.model_attname
 'songs'
->>> f1.artists.related_model_instance
+>>> song1.artists.related_model_instance
 <Song: Princes of the Universe>
->>> f1.artists.related_model_field_name
+>>> song1.artists.related_model_attname
 'artists'
 
->>> e1.artist.exposed_manager_data_for_tests['model_field_name']
-'albumns'
->>> e1.artist.exposed_manager_data_for_tests['related_model_instance']
+>>> del album1._artist_cache
+>>> album1.artist.exposed_manager_data_for_tests['model_attname']
+'albums'
+>>> album1.artist.exposed_manager_data_for_tests['related_model_instance']
 <Album: A Kind of Magic>
->>> e1.artist.exposed_manager_data_for_tests['related_model_field_name']
+>>> album1.artist.exposed_manager_data_for_tests['related_model_attname']
 'artist'
 """}

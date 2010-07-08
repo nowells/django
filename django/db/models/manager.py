@@ -51,9 +51,17 @@ class Manager(object):
         super(Manager, self).__init__()
         self._set_creation_counter()
         self.model = None
-        self.model_field_name = None
+
+        # Attributes of the manager object that expose relationship data for related managers.
+        #   For the following attributes, lets use an example with models Artist(name=CharField), Song(artist=ForeignKey(Artist, related_name='songs'))
+        #   So for example, when we access a related manager artist.songs, the SongsManager would have the following attributes exposed.
+        # model_attname = the attribute on the Song object that allows you to access the calling object (i.e. 'artist')
+        self.model_attname = None
+        # related_model_instance = artist object that instantiated the artist.songs manager
         self.related_model_instance = None
-        self.related_model_field_name = None
+        # related_model_attname = the attributes on the artist object that will allow access to the Song objects related to it (i.e. 'songs')
+        self.related_model_attname = None
+
         self._inherited = False
         self._db = None
 
