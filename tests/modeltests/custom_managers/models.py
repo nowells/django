@@ -143,7 +143,7 @@ True
 >>> Car._default_manager.order_by('name')
 [<Car: Corvette>, <Car: Neon>]
 
-# Test that each manager descriptor sets the appropriate values for the model_field_name, related_field_name, related_instance
+# Test that each manager descriptor sets the appropriate values for the model_field_name, related_model_field_name, related_model_instance
 >>> d1 = Artist.objects.create(name='Queen')
 >>> e1 = Album.objects.create(artist=d1, name='A Kind of Magic')
 >>> f1 = Song.objects.create(album=e1, name='Princes of the Universe')
