@@ -9,5 +9,6 @@ urlpatterns = patterns('regressiontests.urlpatterns_reverse.views',
 
     (r'^test3/', include(testobj3.urls)),
     (r'^ns-included3/', include('regressiontests.urlpatterns_reverse.included_urls', namespace='inc-ns3')),
+    (r'^ns-included4/', include('regressiontests.urlpatterns_reverse.namespace_urls', namespace='inc-ns4')),
 )
 

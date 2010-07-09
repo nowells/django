@@ -30,7 +30,7 @@ _prefixes = {}
 # Overridden URLconfs for each thread are stored here.
 _urlconfs = {}
 
-class ResolverCandidate(object):
+class ResolverMatch(object):
     def __init__(self, func, args, kwargs, url_name=None, app_name=None, namespaces=[]):
         self.func = func
         self.args = args
@@ -58,7 +58,7 @@ class ResolverCandidate(object):
     def reverse(self):
         return reverse(self.view_name, args=self.args, kwargs=self.kwargs, current_app=self.app_name)
 
-class ResolverCandidates(object):
+class ResolverMatches(object):
     def __init__(self, resolver):
         self.resolver = resolver
         self.__in_iteration = False
@@ -186,7 +186,7 @@ class RegexURLPattern(object):
             # In both cases, pass any extra_kwargs as **kwargs.
             kwargs.update(self.default_args)
 
-            return ResolverCandidate(self.callback, args, kwargs, self.name)
+            return ResolverMatch(self.callback, args, kwargs, self.name)
 
     def _get_callback(self):
         if self._callback is not None:
@@ -276,7 +276,7 @@ class RegexURLResolver(object):
         return self.backtracking_resolve(path).next()
 
     def backtracking_resolve(self, path):
-        return ResolverCandidates(self.__backtracking_resolve(path))
+        return ResolverMatches(self.__backtracking_resolve(path))
 
     def __backtracking_resolve(self, path):
         tried = []
@@ -297,7 +297,7 @@ class RegexURLResolver(object):
                         tried.append(pattern.regex.pattern)
                 else:
                     if sub_matches:
-                        if isinstance(sub_matches, ResolverCandidate):
+                        if isinstance(sub_matches, ResolverMatch):
                             sub_matches = [ sub_matches ]
 
                         for sub_match in sub_matches:
@@ -305,7 +305,7 @@ class RegexURLResolver(object):
                             sub_match_dict.update(self.default_kwargs)
                             for k, v in sub_match.kwargs.iteritems():
                                 sub_match_dict[smart_str(k)] = v
-                            yield ResolverCandidate(sub_match.func, sub_match.args, sub_match_dict, sub_match.url_name, self.app_name or sub_match.app_name, [ self.namespace ] + sub_match.namespaces)
+                            yield ResolverMatch(sub_match.func, sub_match.args, sub_match_dict, sub_match.url_name, self.app_name or sub_match.app_name, [ self.namespace ] + sub_match.namespaces)
                     tried.append(pattern.regex.pattern)
             raise Resolver404({'tried': tried, 'path': new_path})
         raise Resolver404({'path' : path})
