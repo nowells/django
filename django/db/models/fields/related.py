@@ -7,6 +7,7 @@ from django.db.models.fields import (AutoField, Field, IntegerField,
 from django.db.models.related import RelatedObject
 from django.db.models.query import QuerySet
 from django.db.models.query_utils import QueryWrapper
+from django.utils import copycompat as copy
 from django.utils.encoding import smart_unicode
 from django.utils.translation import ugettext_lazy as _, string_concat, ungettext, ugettext
 from django.utils.functional import curry
@@ -294,7 +295,7 @@ class ReverseSingleRelatedObjectDescriptor(object):
 
             # If the related manager indicates that it should be used for
             # related fields, respect that.
-            rel_mgr = self.field.rel.to._default_manager
+            rel_mgr = copy.copy(self.field.rel.to._default_manager)
             rel_mgr.model_attname = self.field.rel.related_name
             rel_mgr.related_model_instance = instance
             rel_mgr.related_model_attname = self.field.name
