@@ -1,3 +1,5 @@
+import copy
+
 from django.conf import settings
 from django.db import connection, router, transaction
 from django.db.backends import util
@@ -7,7 +9,6 @@ from django.db.models.fields import (AutoField, Field, IntegerField,
 from django.db.models.related import RelatedObject
 from django.db.models.query import QuerySet
 from django.db.models.query_utils import QueryWrapper
-from django.utils import copycompat as copy
 from django.utils.encoding import smart_unicode
 from django.utils.translation import ugettext_lazy as _, string_concat, ungettext, ugettext
 from django.utils.functional import curry
