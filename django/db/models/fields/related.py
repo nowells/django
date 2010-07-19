@@ -411,9 +411,9 @@ class ForeignRelatedObjectsDescriptor(object):
         rel_model = self.related.model
 
         class RelatedManager(superclass):
-            def get_query_set(self):
+            def get_query_set(self, *args, **kwargs):
                 db = self._db or router.db_for_read(rel_model, instance=instance)
-                return superclass.get_query_set(self).using(db).filter(**(self.core_filters))
+                return superclass.get_query_set(self, *args, **kwargs).using(db).filter(**(self.core_filters))
 
             def add(self, *objs):
                 for obj in objs:
@@ -488,9 +488,9 @@ def create_many_related_manager(superclass, rel=False):
             if self._pk_val is None:
                 raise ValueError("%r instance needs to have a primary key value before a many-to-many relationship can be used." % instance.__class__.__name__)
 
-        def get_query_set(self):
+        def get_query_set(self, *args, **kwargs):
             db = self._db or router.db_for_read(self.instance.__class__, instance=self.instance)
-            return superclass.get_query_set(self).using(db)._next_is_sticky().filter(**(self.core_filters))
+            return superclass.get_query_set(self, *args, **kwargs).using(db)._next_is_sticky().filter(**(self.core_filters))
 
         # If the ManyToMany relation has an intermediary model,
         # the add and remove methods do not exist.
