@@ -31,14 +31,22 @@ _prefixes = {}
 _urlconfs = {}
 
 class ResolverMatch(object):
-    def __init__(self, func, args, kwargs, url_name=None, app_name=None, namespaces=[]):
+    def __init__(self, func, args, kwargs, url_name=None, app_name=None, namespaces=None):
         self.func = func
         self.args = args
         self.kwargs = kwargs
         self.app_name = app_name
-        self.namespaces = [ x for x in namespaces if x ]
+        if namespaces:
+            self.namespaces = [x for x in namespaces if x]
+        else:
+            self.namespaces = []
         if not url_name:
-            url_name = '.'.join([ func.__module__, func.__name__ ])
+            if not hasattr(func, '__name__'):
+                # An instance of a callable class
+                url_name = '.'.join([func.__class__.__module__, func.__class__.__name__])
+            else:
+                # A function
+                url_name = '.'.join([func.__module__, func.__name__])
         self.url_name = url_name
 
     def namespace(self):
@@ -53,10 +61,8 @@ class ResolverMatch(object):
         return (self.func, self.args, self.kwargs)[index]
 
     def __repr__(self):
-        return '(%s, %s, %s)' % (self.func, self.args, self.kwargs)
-
-    def reverse(self):
-        return reverse(self.view_name, args=self.args, kwargs=self.kwargs, current_app=self.app_name)
+        return "ResolverMatch(func=%s, args=%s, kwargs=%s, url_name='%s', app_name='%s', namespace='%s')" % (
+            self.func, self.args, self.kwargs, self.url_name, self.app_name, self.namespace)
 
 class ResolverMatches(object):
     def __init__(self, resolver):
@@ -249,7 +255,8 @@ class RegexURLResolver(object):
             else:
                 bits = normalize(p_pattern)
                 lookups.appendlist(pattern.callback, (bits, p_pattern))
-                lookups.appendlist(pattern.name, (bits, p_pattern))
+                if pattern.name is not None:
+                    lookups.appendlist(pattern.name, (bits, p_pattern))
         self._reverse_dict = lookups
         self._namespace_dict = namespaces
         self._app_dict = apps
@@ -305,7 +312,7 @@ class RegexURLResolver(object):
                             sub_match_dict.update(self.default_kwargs)
                             for k, v in sub_match.kwargs.iteritems():
                                 sub_match_dict[smart_str(k)] = v
-                            yield ResolverMatch(sub_match.func, sub_match.args, sub_match_dict, sub_match.url_name, self.app_name or sub_match.app_name, [ self.namespace ] + sub_match.namespaces)
+                            yield ResolverMatch(sub_match.func, sub_match.args, sub_match_dict, sub_match.url_name, self.app_name or sub_match.app_name, [self.namespace] + sub_match.namespaces)
                     tried.append(pattern.regex.pattern)
             raise Resolver404({'tried': tried, 'path': new_path})
         raise Resolver404({'path' : path})

@@ -14,3 +14,9 @@ def resolver_404_view(request, *args, **kwargs):
 
 def backtracking_view(request, *args, **kwargs):
     pass
+
+class ViewClass(object):
+    def __call__(self, request, *args, **kwargs):
+        pass
+
+view_class_instance = ViewClass()
