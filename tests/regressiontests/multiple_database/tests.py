@@ -24,7 +24,7 @@ class QueryTestCase(TestCase):
     multi_db = True
 
     def test_db_selection(self):
-        "Check that querysets will use the default databse by default"
+        "Check that querysets will use the default database by default"
         self.assertEquals(Book.objects.db, DEFAULT_DB_ALIAS)
         self.assertEquals(Book.objects.all().db, DEFAULT_DB_ALIAS)
 
@@ -581,6 +581,12 @@ class QueryTestCase(TestCase):
         self.assertEquals(Person.objects.using('other').count(), 0)
         self.assertEquals(Pet.objects.using('other').count(), 0)
 
+    def test_foreign_key_validation(self):
+        "ForeignKey.validate() uses the correct database"
+        mickey = Person.objects.using('other').create(name="Mickey")
+        pluto = Pet.objects.using('other').create(name="Pluto", owner=mickey)
+        self.assertEquals(None, pluto.full_clean())
+
     def test_o2o_separation(self):
         "OneToOne fields are constrained to a single database"
         # Create a user and profile on the default database
@@ -853,10 +859,10 @@ class QueryTestCase(TestCase):
         "test the raw() method across databases"
         dive = Book.objects.using('other').create(title="Dive into Python",
             published=datetime.date(2009, 5, 4))
-        val = Book.objects.db_manager("other").raw('SELECT id FROM "multiple_database_book"')
+        val = Book.objects.db_manager("other").raw('SELECT id FROM multiple_database_book')
         self.assertEqual(map(lambda o: o.pk, val), [dive.pk])
 
-        val = Book.objects.raw('SELECT id FROM "multiple_database_book"').using('other')
+        val = Book.objects.raw('SELECT id FROM multiple_database_book').using('other')
         self.assertEqual(map(lambda o: o.pk, val), [dive.pk])
 
     def test_select_related(self):
@@ -891,6 +897,28 @@ class QueryTestCase(TestCase):
         except ValueError:
             pass
 
+    def test_related_manager(self):
+        "Related managers return managers, not querysets"
+        mark = Person.objects.using('other').create(name="Mark Pilgrim")
+
+        # extra_arg is removed by the BookManager's implementation of
+        # create(); but the BookManager's implementation won't get called
+        # unless edited returns a Manager, not a queryset
+        mark.book_set.create(title="Dive into Python",
+                             published=datetime.date(2009, 5, 4),
+                             extra_arg=True)
+
+        mark.book_set.get_or_create(title="Dive into Python",
+                                    published=datetime.date(2009, 5, 4),
+                                    extra_arg=True)
+
+        mark.edited.create(title="Dive into Water",
+                           published=datetime.date(2009, 5, 4),
+                           extra_arg=True)
+
+        mark.edited.get_or_create(title="Dive into Water",
+                                  published=datetime.date(2009, 5, 4),
+                                  extra_arg=True)
 
 class TestRouter(object):
     # A test router. The behaviour is vaguely master/slave, but the
@@ -1221,7 +1249,7 @@ class RouterTestCase(TestCase):
 
         mark = Person.objects.using('default').create(pk=2, name="Mark Pilgrim")
 
-        # Now save back onto the usual databse.
+        # Now save back onto the usual database.
         # This simulates master/slave - the objects exist on both database,
         # but the _state.db is as it is for all other tests.
         pro.save(using='default')
@@ -1548,13 +1576,17 @@ class AuthTestCase(TestCase):
         command_output = new_io.getvalue().strip()
         self.assertTrue('"email": "alice@example.com",' in command_output)
 
+_missing = object()
 class UserProfileTestCase(TestCase):
     def setUp(self):
-        self.old_auth_profile_module = getattr(settings, 'AUTH_PROFILE_MODULE', None)
+        self.old_auth_profile_module = getattr(settings, 'AUTH_PROFILE_MODULE', _missing)
         settings.AUTH_PROFILE_MODULE = 'multiple_database.UserProfile'
 
     def tearDown(self):
-        settings.AUTH_PROFILE_MODULE = self.old_auth_profile_module
+        if self.old_auth_profile_module is _missing:
+            del settings.AUTH_PROFILE_MODULE
+        else:
+            settings.AUTH_PROFILE_MODULE = self.old_auth_profile_module
 
     def test_user_profiles(self):
 
@@ -1570,10 +1602,30 @@ class UserProfileTestCase(TestCase):
         self.assertEquals(alice.get_profile().flavor, 'chocolate')
         self.assertEquals(bob.get_profile().flavor, 'crunchy frog')
 
+class AntiPetRouter(object):
+    # A router that only expresses an opinion on syncdb,
+    # passing pets to the 'other' database
+
+    def allow_syncdb(self, db, model):
+        "Make sure the auth app only appears on the 'other' db"
+        if db == 'other':
+            return model._meta.object_name == 'Pet'
+        else:
+            return model._meta.object_name != 'Pet'
+        return None
 
 class FixtureTestCase(TestCase):
     multi_db = True
     fixtures = ['multidb-common', 'multidb']
+
+    def setUp(self):
+        # Install the anti-pet router
+        self.old_routers = router.routers
+        router.routers = [AntiPetRouter()]
+
+    def tearDown(self):
+        # Restore the 'other' database as an independent database
+        router.routers = self.old_routers
 
     def test_fixture_loading(self):
         "Multi-db fixtures are loaded correctly"
@@ -1611,6 +1663,14 @@ class FixtureTestCase(TestCase):
             Book.objects.using('other').get(title="The Definitive Guide to Django")
         except Book.DoesNotExist:
             self.fail('"The Definitive Guide to Django" should exist on both databases')
+
+    def test_pseudo_empty_fixtures(self):
+        "A fixture can contain entries, but lead to nothing in the database; this shouldn't raise an error (ref #14068)"
+        new_io = StringIO()
+        management.call_command('loaddata', 'pets', stdout=new_io, stderr=new_io)
+        command_output = new_io.getvalue().strip()
+        # No objects will actually be loaded
+        self.assertEqual(command_output, "Installed 0 object(s) (of 2) from 1 fixture(s)")
 
 class PickleQuerySetTestCase(TestCase):
     multi_db = True

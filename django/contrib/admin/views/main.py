@@ -1,9 +1,9 @@
 from django.contrib.admin.filterspecs import FilterSpec
 from django.contrib.admin.options import IncorrectLookupParameters
-from django.contrib.admin.util import quote
+from django.contrib.admin.util import quote, get_fields_from_path
+from django.core.exceptions import SuspiciousOperation
 from django.core.paginator import Paginator, InvalidPage
 from django.db import models
-from django.db.models.query import QuerySet
 from django.utils.encoding import force_unicode, smart_str
 from django.utils.translation import ugettext
 from django.utils.http import urlencode
@@ -39,7 +39,6 @@ class ChangeList(object):
         self.search_fields = search_fields
         self.list_select_related = list_select_related
         self.list_per_page = list_per_page
-        self.list_editable = list_editable
         self.model_admin = model_admin
 
         # Get search parameters from the query string.
@@ -58,6 +57,10 @@ class ChangeList(object):
         if ERROR_FLAG in self.params:
             del self.params[ERROR_FLAG]
 
+        if self.is_popup:
+            self.list_editable = ()
+        else:
+            self.list_editable = list_editable
         self.order_field, self.order_type = self.get_ordering()
         self.query = request.GET.get(SEARCH_VAR, '')
         self.query_set = self.get_query_set()
@@ -69,9 +72,11 @@ class ChangeList(object):
     def get_filters(self, request):
         filter_specs = []
         if self.list_filter:
-            filter_fields = [self.lookup_opts.get_field(field_name) for field_name in self.list_filter]
-            for f in filter_fields:
-                spec = FilterSpec.create(f, request, self.params, self.model, self.model_admin)
+            for filter_name in self.list_filter:
+                field = get_fields_from_path(self.model, filter_name)[-1]
+                spec = FilterSpec.create(field, request, self.params,
+                                         self.model, self.model_admin,
+                                         field_path=filter_name)
                 if spec and spec.has_output():
                     filter_specs.append(spec)
         return filter_specs, bool(filter_specs)
@@ -93,7 +98,7 @@ class ChangeList(object):
         return '?%s' % urlencode(p)
 
     def get_results(self, request):
-        paginator = Paginator(self.query_set, self.list_per_page)
+        paginator = self.model_admin.get_paginator(request, self.query_set, self.list_per_page)
         # Get the number of objects, with admin filters applied.
         result_count = paginator.count
 
@@ -116,7 +121,7 @@ class ChangeList(object):
             try:
                 result_list = paginator.page(self.page_num+1).object_list
             except InvalidPage:
-                result_list = ()
+                raise IncorrectLookupParameters
 
         self.result_count = result_count
         self.full_result_count = full_result_count
@@ -187,13 +192,18 @@ class ChangeList(object):
                 else:
                     lookup_params[key] = True
 
+            if not self.model_admin.lookup_allowed(key):
+                raise SuspiciousOperation(
+                    "Filtering by %s not allowed" % key
+                )
+
         # Apply lookup parameters from the query string.
         try:
             qs = qs.filter(**lookup_params)
         # Naked except! Because we don't have any other way of validating "params".
         # They might be invalid if the keyword arguments are incorrect, or if the
         # values are not in the correct type, so we might get FieldError, ValueError,
-        # ValicationError, or ? from a custom field that raises yet something else 
+        # ValicationError, or ? from a custom field that raises yet something else
         # when handed impossible data.
         except:
             raise IncorrectLookupParameters

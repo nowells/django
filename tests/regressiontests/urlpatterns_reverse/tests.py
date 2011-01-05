@@ -1,28 +1,17 @@
 """
 Unit tests for reverse URL lookups.
 """
-__test__ = {'API_TESTS': """
-
-RegexURLResolver should raise an exception when no urlpatterns exist.
-
->>> from django.core.urlresolvers import RegexURLResolver
->>> no_urls = 'regressiontests.urlpatterns_reverse.no_urls'
->>> resolver = RegexURLResolver(r'^$', no_urls)
->>> resolver.url_patterns
-Traceback (most recent call last):
-...
-ImproperlyConfigured: The included urlconf regressiontests.urlpatterns_reverse.no_urls doesn't have any patterns in it
-"""}
-
-import unittest
-
 from django.conf import settings
 
 from django.core.exceptions import ImproperlyConfigured
-from django.core.urlresolvers import backtracking_resolve, reverse, resolve, NoReverseMatch, Resolver404, ResolverMatch
+from django.core.urlresolvers import backtracking_resolve,\
+                                     reverse, resolve, NoReverseMatch,\
+                                     Resolver404, ResolverMatch,\
+                                     RegexURLResolver, RegexURLPattern
 from django.http import HttpResponseRedirect, HttpResponsePermanentRedirect
 from django.shortcuts import redirect
 from django.test import TestCase
+from django.utils import unittest
 
 import urlconf_outer
 import urlconf_inner
@@ -143,6 +132,27 @@ test_data = (
 
 )
 
+class NoURLPatternsTests(TestCase):
+    urls = 'regressiontests.urlpatterns_reverse.no_urls'
+
+    def assertRaisesErrorWithMessage(self, error, message, callable,
+        *args, **kwargs):
+        self.assertRaises(error, callable, *args, **kwargs)
+        try:
+            callable(*args, **kwargs)
+        except error, e:
+            self.assertEqual(message, str(e))
+
+    def test_no_urls_exception(self):
+        """
+        RegexURLResolver should raise an exception when no urlpatterns exist.
+        """
+        resolver = RegexURLResolver(r'^$', self.urls)
+
+        self.assertRaisesErrorWithMessage(ImproperlyConfigured,
+            "The included urlconf regressiontests.urlpatterns_reverse.no_urls "\
+            "doesn't have any patterns in it", getattr, resolver, 'url_patterns')
+
 class URLPatternReverse(TestCase):
     urls = 'regressiontests.urlpatterns_reverse.urls'
 
@@ -186,6 +196,42 @@ class ResolverTests(unittest.TestCase):
         self.assertRaises(Resolver404, resolve, 'a')
         self.assertRaises(Resolver404, resolve, '\\')
         self.assertRaises(Resolver404, resolve, '.')
+
+    def test_404_tried_urls_have_names(self):
+        """
+        Verifies that the list of URLs that come back from a Resolver404
+        exception contains a list in the right format for printing out in
+        the DEBUG 404 page with both the patterns and URL names, if available.
+        """
+        urls = 'regressiontests.urlpatterns_reverse.named_urls'
+        # this list matches the expected URL types and names returned when
+        # you try to resolve a non-existent URL in the first level of included
+        # URLs in named_urls.py (e.g., '/included/non-existent-url')
+        url_types_names = [
+            [{'type': RegexURLPattern, 'name': 'named-url1'}],
+            [{'type': RegexURLPattern, 'name': 'named-url2'}],
+            [{'type': RegexURLPattern, 'name': None}],
+            [{'type': RegexURLResolver}, {'type': RegexURLPattern, 'name': 'named-url3'}],
+            [{'type': RegexURLResolver}, {'type': RegexURLPattern, 'name': 'named-url4'}],
+            [{'type': RegexURLResolver}, {'type': RegexURLPattern, 'name': None}],
+            [{'type': RegexURLResolver}, {'type': RegexURLResolver}],
+        ]
+        try:
+            resolve('/included/non-existent-url', urlconf=urls)
+            self.fail('resolve did not raise a 404')
+        except Resolver404, e:
+            # make sure we at least matched the root ('/') url resolver:
+            self.assertTrue('tried' in e.args[0])
+            tried = e.args[0]['tried']
+            self.assertEqual(len(e.args[0]['tried']), len(url_types_names), 'Wrong number of tried URLs returned.  Expected %s, got %s.' % (len(url_types_names), len(e.args[0]['tried'])))
+            for tried, expected in zip(e.args[0]['tried'], url_types_names):
+                for t, e in zip(tried, expected):
+                    self.assertTrue(isinstance(t, e['type']), '%s is not an instance of %s' % (t, e['type']))
+                    if 'name' in e:
+                        if not e['name']:
+                            self.assertTrue(t.name is None, 'Expected no URL name but found %s.' % t.name)
+                        else:
+                            self.assertEqual(t.name, e['name'], 'Wrong URL name.  Expected "%s", got "%s".' % (e['name'], t.name))
 
 class ReverseShortcutTests(TestCase):
     urls = 'regressiontests.urlpatterns_reverse.urls'
@@ -369,6 +415,22 @@ class ErrorHandlerResolutionTests(TestCase):
         handler = (empty_view, {})
         self.assertEqual(self.callable_resolver.resolve404(), handler)
         self.assertEqual(self.callable_resolver.resolve500(), handler)
+
+class DefaultErrorHandlerTests(TestCase):
+    urls = 'regressiontests.urlpatterns_reverse.urls_without_full_import'
+
+    def test_default_handler(self):
+        "If the urls.py doesn't specify handlers, the defaults are used"
+        try:
+            response = self.client.get('/test/')
+            self.assertEquals(response.status_code, 404)
+        except AttributeError:
+            self.fail("Shouldn't get an AttributeError due to undefined 404 handler")
+
+        try:
+            self.assertRaises(ValueError, self.client.get, '/bad_view/')
+        except AttributeError:
+            self.fail("Shouldn't get an AttributeError due to undefined 500 handler")
 
 class NoRootUrlConfTests(TestCase):
     """Tests for handler404 and handler500 if urlconf is None"""

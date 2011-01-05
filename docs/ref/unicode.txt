@@ -1,10 +1,6 @@
-.. _ref-unicode:
-
 ============
 Unicode data
 ============
-
-.. versionadded:: 1.0
 
 Django natively supports Unicode data everywhere. Providing your database can
 somehow store the data, you can safely pass around Unicode strings to
@@ -95,7 +91,7 @@ Calling ``unicode()`` with the lazy translation as the argument will generate a
 Unicode string in the current locale.
 
 For more details about lazy translation objects, refer to the
-:ref:`internationalization <topics-i18n>` documentation.
+:doc:`internationalization </topics/i18n/index>` documentation.
 
 Useful utility functions
 ------------------------

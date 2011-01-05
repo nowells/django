@@ -2,6 +2,7 @@
 Sphinx plugins for Django documentation.
 """
 import os
+import re
 
 from docutils import nodes, transforms
 try:
@@ -19,7 +20,11 @@ from sphinx import addnodes, roles
 from sphinx.builders.html import StandaloneHTMLBuilder
 from sphinx.writers.html import SmartyPantsHTMLTranslator
 from sphinx.util.console import bold
+from sphinx.util.compat import Directive
 
+# RE for option descriptions without a '--' prefix
+simple_option_desc_re = re.compile(
+    r'([-_a-zA-Z0-9]+)(\s*.*?)(?=,\s+(?:/|-|--)|$)')
 
 def setup(app):
     app.add_crossref_type(
@@ -55,38 +60,43 @@ def setup(app):
         parse_node    = parse_django_adminopt_node,
     )
     app.add_config_value('django_next_version', '0.0', True)
-    app.add_directive('versionadded', parse_version_directive, 1, (1, 1, 1))
-    app.add_directive('versionchanged', parse_version_directive, 1, (1, 1, 1))
+    app.add_directive('versionadded', VersionDirective)
+    app.add_directive('versionchanged', VersionDirective)
     app.add_transform(SuppressBlockquotes)
     app.add_builder(DjangoStandaloneHTMLBuilder)
 
-def parse_version_directive(name, arguments, options, content, lineno,
-                      content_offset, block_text, state, state_machine):
-    env = state.document.settings.env
-    is_nextversion = env.config.django_next_version == arguments[0]
-    ret = []
-    node = addnodes.versionmodified()
-    ret.append(node)
-    if not is_nextversion:
-        if len(arguments) == 1:
-            linktext = 'Please, see the release notes <releases-%s>' % (arguments[0])
-            try:
-                xrefs = roles.XRefRole()('ref', linktext, linktext, lineno, state) # Sphinx >= 1.0
-            except:
-                xrefs = roles.xfileref_role('ref', linktext, linktext, lineno, state) # Sphinx < 1.0
-            node.extend(xrefs[0])
-        node['version'] = arguments[0]
-    else:
-        node['version'] = "Development version"
-    node['type'] = name
-    if len(arguments) == 2:
-        inodes, messages = state.inline_text(arguments[1], lineno+1)
-        node.extend(inodes)
-        if content:
-            state.nested_parse(content, content_offset, node)
-        ret = ret + messages
-    env.note_versionchange(node['type'], node['version'], node, lineno)
-    return ret
+
+class VersionDirective(Directive):
+    has_content = True
+    required_arguments = 1
+    optional_arguments = 1
+    final_argument_whitespace = True
+    option_spec = {}
+
+    def run(self):
+        env = self.state.document.settings.env
+        arg0 = self.arguments[0]
+        is_nextversion = env.config.django_next_version == arg0
+        ret = []
+        node = addnodes.versionmodified()
+        ret.append(node)
+        if not is_nextversion:
+            if len(self.arguments) == 1:
+                linktext = 'Please, see the release notes </releases/%s>' % (arg0)
+                xrefs = roles.XRefRole()('doc', linktext, linktext, self.lineno, self.state)
+                node.extend(xrefs[0])
+            node['version'] = arg0
+        else:
+            node['version'] = "Development version"
+        node['type'] = self.name
+        if len(self.arguments) == 2:
+            inodes, messages = self.state.inline_text(self.arguments[1], self.lineno+1)
+            node.extend(inodes)
+            if self.content:
+                self.state.nested_parse(self.content, self.content_offset, node)
+            ret = ret + messages
+        env.note_versionchange(node['type'], node['version'], node, self.lineno)
+        return ret
 
 
 class SuppressBlockquotes(transforms.Transform):
@@ -183,10 +193,7 @@ def parse_django_admin_node(env, sig, signode):
 
 def parse_django_adminopt_node(env, sig, signode):
     """A copy of sphinx.directives.CmdoptionDesc.parse_signature()"""
-    try:
-        from sphinx.domains.std import option_desc_re # Sphinx >= 1.0
-    except:
-        from sphinx.directives.desc import option_desc_re # Sphinx < 1.0
+    from sphinx.domains.std import option_desc_re
     count = 0
     firstname = ''
     for m in option_desc_re.finditer(sig):
@@ -198,6 +205,16 @@ def parse_django_adminopt_node(env, sig, signode):
         if not count:
             firstname = optname
         count += 1
+    if not count:
+        for m in simple_option_desc_re.finditer(sig):
+            optname, args = m.groups()
+            if count:
+                signode += addnodes.desc_addname(', ', ', ')
+            signode += addnodes.desc_name(optname, optname)
+            signode += addnodes.desc_addname(args, args)
+            if not count:
+                firstname = optname
+            count += 1
     if not firstname:
         raise ValueError
     return firstname
@@ -216,14 +233,13 @@ class DjangoStandaloneHTMLBuilder(StandaloneHTMLBuilder):
             self.warn("cannot create templatebuiltins.js due to missing simplejson dependency")
             return
         self.info(bold("writing templatebuiltins.js..."))
-        try:
-            xrefs = self.env.reftargets.keys()
-            templatebuiltins = dict([('ttags', [n for (t,n) in xrefs if t == 'ttag']),
-                                     ('tfilters', [n for (t,n) in xrefs if t == 'tfilter'])])
-        except AttributeError:
-            xrefs = self.env.domaindata["std"]["objects"]
-            templatebuiltins = dict([('ttags', [n for (t,n) in xrefs if t == 'templatetag']),
-                                     ('tfilters', [n for (t,n) in xrefs if t == 'templatefilter'])])
+        xrefs = self.env.domaindata["std"]["objects"]
+        templatebuiltins = {
+            "ttags": [n for ((t, n), (l, a)) in xrefs.items()
+                        if t == "templatetag" and l == "ref/templates/builtins"],
+            "tfilters": [n for ((t, n), (l, a)) in xrefs.items()
+                        if t == "templatefilter" and l == "ref/templates/builtins"],
+        }
         outfilename = os.path.join(self.outdir, "templatebuiltins.js")
         f = open(outfilename, 'wb')
         f.write('var django_template_builtins = ')

@@ -1,4 +1,9 @@
+import base64
 from datetime import datetime, timedelta
+import pickle
+import shutil
+import tempfile
+
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore as DatabaseSession
 from django.contrib.sessions.backends.cache import SessionStore as CacheSession
@@ -6,11 +11,12 @@ from django.contrib.sessions.backends.cached_db import SessionStore as CacheDBSe
 from django.contrib.sessions.backends.file import SessionStore as FileSession
 from django.contrib.sessions.backends.base import SessionBase
 from django.contrib.sessions.models import Session
+from django.contrib.sessions.middleware import SessionMiddleware
 from django.core.exceptions import ImproperlyConfigured
-from django.test import TestCase
-import shutil
-import tempfile
-import unittest
+from django.http import HttpResponse
+from django.test import TestCase, RequestFactory
+from django.utils import unittest
+from django.utils.hashcompat import md5_constructor
 
 
 class SessionTestsMixin(object):
@@ -207,39 +213,84 @@ class SessionTestsMixin(object):
         # Tests get_expire_at_browser_close with different settings and different
         # set_expiry calls
         try:
-            original_expire_at_browser_close = settings.SESSION_EXPIRE_AT_BROWSER_CLOSE
-            settings.SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+            try:
+                original_expire_at_browser_close = settings.SESSION_EXPIRE_AT_BROWSER_CLOSE
+                settings.SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 
-            self.session.set_expiry(10)
-            self.assertFalse(self.session.get_expire_at_browser_close())
+                self.session.set_expiry(10)
+                self.assertFalse(self.session.get_expire_at_browser_close())
 
-            self.session.set_expiry(0)
-            self.assertTrue(self.session.get_expire_at_browser_close())
+                self.session.set_expiry(0)
+                self.assertTrue(self.session.get_expire_at_browser_close())
 
-            self.session.set_expiry(None)
-            self.assertFalse(self.session.get_expire_at_browser_close())
+                self.session.set_expiry(None)
+                self.assertFalse(self.session.get_expire_at_browser_close())
 
-            settings.SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+                settings.SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 
-            self.session.set_expiry(10)
-            self.assertFalse(self.session.get_expire_at_browser_close())
+                self.session.set_expiry(10)
+                self.assertFalse(self.session.get_expire_at_browser_close())
 
-            self.session.set_expiry(0)
-            self.assertTrue(self.session.get_expire_at_browser_close())
+                self.session.set_expiry(0)
+                self.assertTrue(self.session.get_expire_at_browser_close())
 
-            self.session.set_expiry(None)
-            self.assertTrue(self.session.get_expire_at_browser_close())
+                self.session.set_expiry(None)
+                self.assertTrue(self.session.get_expire_at_browser_close())
 
-        except:
-            raise
-
+            except:
+                raise
         finally:
             settings.SESSION_EXPIRE_AT_BROWSER_CLOSE = original_expire_at_browser_close
+
+    def test_decode(self):
+        # Ensure we can decode what we encode
+        data = {'a test key': 'a test value'}
+        encoded = self.session.encode(data)
+        self.assertEqual(self.session.decode(encoded), data)
+
+    def test_decode_django12(self):
+        # Ensure we can decode values encoded using Django 1.2
+        # Hard code the Django 1.2 method here:
+        def encode(session_dict):
+            pickled = pickle.dumps(session_dict, pickle.HIGHEST_PROTOCOL)
+            pickled_md5 = md5_constructor(pickled + settings.SECRET_KEY).hexdigest()
+            return base64.encodestring(pickled + pickled_md5)
+
+        data = {'a test key': 'a test value'}
+        encoded = encode(data)
+        self.assertEqual(self.session.decode(encoded), data)
 
 
 class DatabaseSessionTests(SessionTestsMixin, TestCase):
 
     backend = DatabaseSession
+
+    def test_session_get_decoded(self):
+        """
+        Test we can use Session.get_decoded to retrieve data stored
+        in normal way
+        """
+        self.session['x'] = 1
+        self.session.save()
+
+        s = Session.objects.get(session_key=self.session.session_key)
+
+        self.assertEqual(s.get_decoded(), {'x': 1})
+
+    def test_sessionmanager_save(self):
+        """
+        Test SessionManager.save method
+        """
+        # Create a session
+        self.session['y'] = 1
+        self.session.save()
+
+        s = Session.objects.get(session_key=self.session.session_key)
+        # Change it
+        Session.objects.save(s.session_key, {'y':2}, s.expire_date)
+        # Clear cache, so that it will be retrieved from DB
+        del self.session._session_cache
+        self.assertEqual(self.session['y'], 2)
 
 
 class CacheDBSessionTests(SessionTestsMixin, TestCase):
@@ -271,3 +322,43 @@ class FileSessionTests(SessionTestsMixin, unittest.TestCase):
 class CacheSessionTests(SessionTestsMixin, unittest.TestCase):
 
     backend = CacheSession
+
+
+class SessionMiddlewareTests(unittest.TestCase):
+    def setUp(self):
+        self.old_SESSION_COOKIE_SECURE = settings.SESSION_COOKIE_SECURE
+        self.old_SESSION_COOKIE_HTTPONLY = settings.SESSION_COOKIE_HTTPONLY
+
+    def tearDown(self):
+        settings.SESSION_COOKIE_SECURE = self.old_SESSION_COOKIE_SECURE
+        settings.SESSION_COOKIE_HTTPONLY = self.old_SESSION_COOKIE_HTTPONLY
+
+    def test_secure_session_cookie(self):
+        settings.SESSION_COOKIE_SECURE = True
+
+        request = RequestFactory().get('/')
+        response = HttpResponse('Session test')
+        middleware = SessionMiddleware()
+
+        # Simulate a request the modifies the session
+        middleware.process_request(request)
+        request.session['hello'] = 'world'
+
+        # Handle the response through the middleware
+        response = middleware.process_response(request, response)
+        self.assertTrue(response.cookies[settings.SESSION_COOKIE_NAME]['secure'])
+
+    def test_httponly_session_cookie(self):
+        settings.SESSION_COOKIE_HTTPONLY = True
+
+        request = RequestFactory().get('/')
+        response = HttpResponse('Session test')
+        middleware = SessionMiddleware()
+
+        # Simulate a request the modifies the session
+        middleware.process_request(request)
+        request.session['hello'] = 'world'
+
+        # Handle the response through the middleware
+        response = middleware.process_response(request, response)
+        self.assertTrue(response.cookies[settings.SESSION_COOKIE_NAME]['httponly'])
