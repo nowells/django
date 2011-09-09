@@ -331,38 +331,58 @@ class RegexURLResolver(LocaleRegexProvider):
     def resolve(self, path):
         return self.backtracking_resolve(path).next()
 
-    def backtracking_resolve(self, path):
-        return ResolverMatches(self.__backtracking_resolve(path))
+    def backtracking_resolve(self, path, tried=None):
+        return ResolverMatches(self.__backtracking_resolve(path, tried))
 
-    def __backtracking_resolve(self, path):
-        tried = []
+    def __backtracking_resolve(self, path, tried=None):
+        if tried is None:
+            tried = []
+
         match = self.regex.search(path)
         if match:
             new_path = path[match.end():]
             for pattern in self.url_patterns:
                 try:
                     if isinstance(pattern, RegexURLResolver):
-                        sub_matches = pattern.backtracking_resolve(new_path)
+                        sub_tried = []
+                        sub_matches = pattern.backtracking_resolve(new_path, sub_tried)
+                        if sub_matches:
+                            for sub_match in sub_matches:
+                                sub_match_dict = dict([(smart_str(k), v) for k, v in match.groupdict().items()])
+                                sub_match_dict.update(self.default_kwargs)
+                                for k, v in sub_match.kwargs.iteritems():
+                                    sub_match_dict[smart_str(k)] = v
+                                yield ResolverMatch(
+                                        sub_match.func,
+                                        sub_match.args,
+                                        sub_match_dict,
+                                        sub_match.url_name,
+                                        self.app_name or sub_match.app_name,
+                                        [self.namespace] + sub_match.namespaces,
+                                        )
+                        tried.extend([[pattern] + t for t in sub_tried])
                     else:
-                        sub_matches = pattern.resolve(new_path)
-                except Resolver404, e:
-                    sub_tried = e.args[0].get('tried')
-                    if sub_tried is not None:
-                        tried.extend([(pattern.regex.pattern + '   ' + t) for t in sub_tried])
-                    else:
-                        tried.append(pattern.regex.pattern)
-                else:
-                    if sub_matches:
-                        if isinstance(sub_matches, ResolverMatch):
-                            sub_matches = [ sub_matches ]
-
-                        for sub_match in sub_matches:
+                        sub_match = pattern.resolve(new_path)
+                        if sub_match:
                             sub_match_dict = dict([(smart_str(k), v) for k, v in match.groupdict().items()])
                             sub_match_dict.update(self.default_kwargs)
                             for k, v in sub_match.kwargs.iteritems():
                                 sub_match_dict[smart_str(k)] = v
-                            yield ResolverMatch(sub_match.func, sub_match.args, sub_match_dict, sub_match.url_name, self.app_name or sub_match.app_name, [self.namespace] + sub_match.namespaces)
-                    tried.append(pattern.regex.pattern)
+                            yield ResolverMatch(
+                                    sub_match.func,
+                                    sub_match.args,
+                                    sub_match_dict,
+                                    sub_match.url_name,
+                                    self.app_name or sub_match.app_name,
+                                    [self.namespace] + sub_match.namespaces,
+                                    )
+                        tried.append([pattern])
+                except Resolver404, e:
+                    sub_tried = e.args[0].get('tried')
+                    if sub_tried is not None:
+                        tried.extend([[pattern] + t for t in sub_tried])
+                    else:
+                        tried.append(pattern)
             raise Resolver404({'tried': tried, 'path': new_path})
         raise Resolver404({'path' : path})
 
