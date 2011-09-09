@@ -1,7 +1,7 @@
 from django import forms
-from django.conf import settings
-from django.contrib.admin.util import flatten_fieldsets, lookup_field
-from django.contrib.admin.util import display_for_field, label_for_field
+from django.contrib.admin.util import (flatten_fieldsets, lookup_field,
+    display_for_field, label_for_field, help_text_for_field)
+from django.contrib.admin.templatetags.admin_static import static
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models.fields.related import ManyToManyRel
@@ -75,8 +75,8 @@ class Fieldset(object):
 
     def _media(self):
         if 'collapse' in self.classes:
-            js = ['js/jquery.min.js', 'js/jquery.init.js', 'js/collapse.min.js']
-            return forms.Media(js=['%s%s' % (settings.ADMIN_MEDIA_PREFIX, url) for url in js])
+            js = ['jquery.min.js', 'jquery.init.js', 'collapse.min.js']
+            return forms.Media(js=[static('admin/js/%s' % url) for url in js])
         return forms.Media()
     media = property(_media)
 
@@ -144,6 +144,7 @@ class AdminReadonlyField(object):
             'name': class_name,
             'label': label,
             'field': field,
+            'help_text': help_text_for_field(class_name, form._meta.model)
         }
         self.form = form
         self.model_admin = model_admin
@@ -192,7 +193,8 @@ class InlineAdminFormSet(object):
     """
     A wrapper around an inline formset for use in the admin system.
     """
-    def __init__(self, inline, formset, fieldsets, readonly_fields=None, model_admin=None):
+    def __init__(self, inline, formset, fieldsets, prepopulated_fields=None,
+            readonly_fields=None, model_admin=None):
         self.opts = inline
         self.formset = formset
         self.fieldsets = fieldsets
@@ -200,19 +202,22 @@ class InlineAdminFormSet(object):
         if readonly_fields is None:
             readonly_fields = ()
         self.readonly_fields = readonly_fields
+        if prepopulated_fields is None:
+            prepopulated_fields = {}
+        self.prepopulated_fields = prepopulated_fields
 
     def __iter__(self):
         for form, original in zip(self.formset.initial_forms, self.formset.get_queryset()):
             yield InlineAdminForm(self.formset, form, self.fieldsets,
-                self.opts.prepopulated_fields, original, self.readonly_fields,
-                model_admin=self.model_admin)
+                self.prepopulated_fields, original, self.readonly_fields,
+                model_admin=self.opts)
         for form in self.formset.extra_forms:
             yield InlineAdminForm(self.formset, form, self.fieldsets,
-                self.opts.prepopulated_fields, None, self.readonly_fields,
-                model_admin=self.model_admin)
+                self.prepopulated_fields, None, self.readonly_fields,
+                model_admin=self.opts)
         yield InlineAdminForm(self.formset, self.formset.empty_form,
-            self.fieldsets, self.opts.prepopulated_fields, None,
-            self.readonly_fields, model_admin=self.model_admin)
+            self.fieldsets, self.prepopulated_fields, None,
+            self.readonly_fields, model_admin=self.opts)
 
     def fields(self):
         fk = getattr(self.formset, "fk", None)
@@ -221,7 +226,7 @@ class InlineAdminFormSet(object):
                 continue
             if field in self.readonly_fields:
                 yield {
-                    'label': label_for_field(field, self.opts.model, self.model_admin),
+                    'label': label_for_field(field, self.opts.model, self.opts),
                     'widget': {
                         'is_hidden': False
                     },

@@ -58,6 +58,8 @@ Current developers
 
 Currently, Django is led by a team of volunteers from around the globe.
 
+.. _django-bdfls:
+
 BDFLs
 -----
 
@@ -151,7 +153,7 @@ Joseph Kocherhans
 `Gary Wilson`_
     Gary starting contributing patches to Django in 2006 while developing Web
     applications for `The University of Texas`_ (UT).  Since, he has made
-    contributions to the e-mail and forms systems, as well as many other
+    contributions to the email and forms systems, as well as many other
     improvements and code cleanups throughout the code base.
 
     Gary is currently a developer and software engineering graduate student at
@@ -281,22 +283,69 @@ Honza Král
 
 .. _Whiskey Media: http://www.whiskeymedia.com/
 
+`Idan Gazit`_
+    As a self-professed design geek, Idan was initially attracted to Django
+    sometime between magic-removal and queryset-refactor. Formally trained
+    as a software engineer, Idan straddles the worlds of design and code,
+    jack of two trades and master of none. He is passionate about usability
+    and finding novel ways to extract meaning from data, and is a longtime
+    photographer_.
+
+    Idan previously accepted freelance work under the Pixane_ imprint, but
+    now splits his days between his startup, Skills_, and beautifying all
+    things Django and Python.
+
+.. _Idan Gazit: http://idan.gazit.me
+.. _photographer: http://flickr.com/photos/idangazit
+.. _Pixane: http://pixane.com
+.. _Skills: http://skillsapp.com
+
+`Paul McMillan`_
+    Paul found Django in 2008 while looking for a more
+    structured approach to web programming. He stuck around after
+    figuring out that the developers of Django had already invented
+    many of the wheels he needed. His passion for breaking (and then
+    fixing) things led to his current role working to maintain and
+    improve the security of Django.
+
+    Paul works in Berkeley, California as a `web developer`_ and `security
+    consultant`_.
+
+.. _Paul McMillan: http://subversivecode.com
+.. _web developer: http://zerocoordinate.com
+.. _security consultant: http://subversivecode.com/about
+
+`Julien Phalip`_
+    Julien has a background in software engineering and human-computer
+    interaction. As a Web developer, he enjoys tinkering with the backend as
+    much as designing and coding user interfaces. Julien discovered Django in
+    2007 while doing his PhD in Computing Sciences. Since then he has
+    contributed patches to various components of the framework, in particular
+    the admin. Julien was a co-founder of the `Interaction Consortium`_. He
+    now works as a freelance Web developer and interaction designer.
+
+    Julien lives in Sydney, Australia.
+
+.. _Julien Phalip: http://julienphalip.com
+.. _Interaction Consortium: http://interaction.net.au
+
 Specialists
 -----------
 
 `James Bennett`_
-    James is Django's release manager; he also contributes to the documentation.
+    James is Django's release manager, and also contributes to the
+    documentation and provide the occasional bugfix.
 
     James came to Web development from philosophy when he discovered
     that programmers get to argue just as much while collecting much
-    better pay. He lives in Lawrence, Kansas, where he works for the
-    Journal-World developing Ellington. He `keeps a blog`_, has
-    written a `book on Django`_, and enjoys fine port and talking to
-    his car.
+    better pay. He lives in Lawrence, Kansas and previously worked at
+    World Online; currently, he's part of the Web development team at
+    Mozilla.
+
+    He `keeps a blog`_, and enjoys fine port and talking to his car.
 
 .. _james bennett: http://b-list.org/
 .. _keeps a blog: `james bennett`_
-.. _book on Django: http://www.amazon.com/dp/1590599969/?tag=djangoproject-20
 
 Ian Kelly
     Ian is responsible for Django's support for Oracle.

@@ -1,10 +1,11 @@
 import urllib
-from urlparse import urlparse, urlunparse, urlsplit
 import sys
 import os
 import re
 import mimetypes
 import warnings
+from copy import copy
+from urlparse import urlparse, urlsplit
 try:
     from cStringIO import StringIO
 except ImportError:
@@ -23,7 +24,7 @@ from django.utils.encoding import smart_str
 from django.utils.http import urlencode
 from django.utils.importlib import import_module
 from django.utils.itercompat import is_iterable
-from django.db import transaction, close_connection
+from django.db import close_connection
 from django.test.utils import ContextList
 
 __all__ = ('Client', 'RequestFactory', 'encode_file', 'encode_multipart')
@@ -46,7 +47,7 @@ class FakePayload(object):
 
     def read(self, num_bytes=None):
         if num_bytes is None:
-            num_bytes = self.__len or 1
+            num_bytes = self.__len or 0
         assert self.__len >= num_bytes, "Cannot read more than the available bytes from the HTTP incoming data."
         content = self.__content.read(num_bytes)
         self.__len -= num_bytes
@@ -91,9 +92,12 @@ class ClientHandler(BaseHandler):
 def store_rendered_templates(store, signal, sender, template, context, **kwargs):
     """
     Stores templates and contexts that are rendered.
+
+    The context is copied so that it is an accurate representation at the time
+    of rendering.
     """
     store.setdefault('templates', []).append(template)
-    store.setdefault('context', ContextList()).append(context)
+    store.setdefault('context', ContextList()).append(copy(context))
 
 def encode_multipart(boundary, data):
     """
@@ -203,6 +207,18 @@ class RequestFactory(object):
         "Construct a generic request object."
         return WSGIRequest(self._base_environ(**request))
 
+    def _encode_data(self, data, content_type, ):
+        if content_type is MULTIPART_CONTENT:
+            return encode_multipart(BOUNDARY, data)
+        else:
+            # Encode the content so that the byte representation is correct.
+            match = CONTENT_TYPE_RE.match(content_type)
+            if match:
+                charset = match.group(1)
+            else:
+                charset = settings.DEFAULT_CHARSET
+            return smart_str(data, encoding=charset)
+
     def _get_path(self, parsed):
         # If there are parameters, add them
         if parsed[3]:
@@ -228,16 +244,7 @@ class RequestFactory(object):
              **extra):
         "Construct a POST request."
 
-        if content_type is MULTIPART_CONTENT:
-            post_data = encode_multipart(BOUNDARY, data)
-        else:
-            # Encode the content so that the byte representation is correct.
-            match = CONTENT_TYPE_RE.match(content_type)
-            if match:
-                charset = match.group(1)
-            else:
-                charset = settings.DEFAULT_CHARSET
-            post_data = smart_str(data, encoding=charset)
+        post_data = self._encode_data(data, content_type)
 
         parsed = urlparse(path)
         r = {
@@ -282,25 +289,16 @@ class RequestFactory(object):
             **extra):
         "Construct a PUT request."
 
-        if content_type is MULTIPART_CONTENT:
-            post_data = encode_multipart(BOUNDARY, data)
-        else:
-            post_data = data
-
-        # Make `data` into a querystring only if it's not already a string. If
-        # it is a string, we'll assume that the caller has already encoded it.
-        query_string = None
-        if not isinstance(data, basestring):
-            query_string = urlencode(data, doseq=True)
+        put_data = self._encode_data(data, content_type)
 
         parsed = urlparse(path)
         r = {
-            'CONTENT_LENGTH': len(post_data),
+            'CONTENT_LENGTH': len(put_data),
             'CONTENT_TYPE':   content_type,
             'PATH_INFO':      self._get_path(parsed),
-            'QUERY_STRING':   query_string or parsed[4],
+            'QUERY_STRING':   parsed[4],
             'REQUEST_METHOD': 'PUT',
-            'wsgi.input':     FakePayload(post_data),
+            'wsgi.input':     FakePayload(put_data),
         }
         r.update(extra)
         return self.request(**r)
@@ -352,7 +350,7 @@ class Client(RequestFactory):
         """
         Obtains the current session variables.
         """
-        if 'django.contrib.sessions' in settings.INSTALLED_APPS:
+        if 'django.contrib.sessions.middleware.SessionMiddleware' in settings.MIDDLEWARE_CLASSES:
             engine = import_module(settings.SESSION_ENGINE)
             cookie = self.cookies.get(settings.SESSION_COOKIE_NAME, None)
             if cookie:
@@ -417,7 +415,7 @@ class Client(RequestFactory):
             # Provide a backwards-compatible (but pending deprecation) response.template
             def _get_template(self):
                 warnings.warn("response.template is deprecated; use response.templates instead (which is always a list)",
-                              PendingDeprecationWarning, stacklevel=2)
+                              DeprecationWarning, stacklevel=2)
                 if not self.templates:
                     return None
                 elif len(self.templates) == 1:
@@ -500,7 +498,7 @@ class Client(RequestFactory):
         """
         user = authenticate(**credentials)
         if user and user.is_active \
-                and 'django.contrib.sessions' in settings.INSTALLED_APPS:
+                and 'django.contrib.sessions.middleware.SessionMiddleware' in settings.MIDDLEWARE_CLASSES:
             engine = import_module(settings.SESSION_ENGINE)
 
             # Create a fake request to store login details.

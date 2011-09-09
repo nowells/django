@@ -8,6 +8,7 @@ from django.utils import simplejson
 from django.utils.encoding import smart_str
 from django.core.serializers.json import DjangoJSONEncoder
 from django.test.client import CONTENT_TYPE_RE
+from django.template import RequestContext
 
 
 def backtracking_resolve_dynamic_capture(request, data):
@@ -103,3 +104,19 @@ def check_headers(request):
     "A view that responds with value of the X-ARG-CHECK header"
     return HttpResponse('HTTP_X_ARG_CHECK: %s' % request.META.get('HTTP_X_ARG_CHECK', 'Undefined'))
 
+def raw_post_data(request):
+    "A view that is requested with GET and accesses request.raw_post_data. Refs #14753."
+    return HttpResponse(request.raw_post_data)
+
+def read_all(request):
+    "A view that is requested with accesses request.read()."
+    return HttpResponse(request.read())
+
+def read_buffer(request):
+    "A view that is requested with accesses request.read(LARGE_BUFFER)."
+    return HttpResponse(request.read(99999))
+
+def request_context_view(request):
+    # Special attribute that won't be present on a plain HttpRequest
+    request.special_path = request.path
+    return render_to_response('request_context.html', context_instance=RequestContext(request, {}))

@@ -1,4 +1,5 @@
 from django.test import TestCase
+from django.db.models import Q
 
 from regressiontests.null_fk.models import *
 
@@ -16,15 +17,15 @@ class NullFkTests(TestCase):
         # set of fields will properly LEFT JOIN multiple levels of NULLs (and the things
         # that come after the NULLs, or else data that should exist won't). Regression
         # test for #7369.
-        c = Comment.objects.select_related().get(id=1)
-        self.assertEquals(c.post, p)
-        self.assertEquals(Comment.objects.select_related().get(id=2).post, None)
+        c = Comment.objects.select_related().get(id=c1.id)
+        self.assertEqual(c.post, p)
+        self.assertEqual(Comment.objects.select_related().get(id=c2.id).post, None)
 
         self.assertQuerysetEqual(
             Comment.objects.select_related('post__forum__system_info').all(),
             [
-                (1, u'My first comment', '<Post: First Post>'),
-                (2, u'My second comment', 'None')
+                (c1.id, u'My first comment', '<Post: First Post>'),
+                (c2.id, u'My second comment', 'None')
             ],
             transform = lambda c: (c.id, c.comment_text, repr(c.post))
         )
@@ -35,8 +36,30 @@ class NullFkTests(TestCase):
         self.assertQuerysetEqual(
             Comment.objects.select_related('post__forum__system_info__system_details'),
             [
-                (1, u'My first comment', '<Post: First Post>'),
-                (2, u'My second comment', 'None')
+                (c1.id, u'My first comment', '<Post: First Post>'),
+                (c2.id, u'My second comment', 'None')
             ],
             transform = lambda c: (c.id, c.comment_text, repr(c.post))
         )
+
+    def test_combine_isnull(self):
+        item = Item.objects.create(title='Some Item')
+        pv = PropertyValue.objects.create(label='Some Value')
+        item.props.create(key='a', value=pv)
+        item.props.create(key='b') # value=NULL
+        q1 = Q(props__key='a', props__value=pv)
+        q2 = Q(props__key='b', props__value__isnull=True)
+
+        # Each of these individually should return the item.
+        self.assertEqual(Item.objects.get(q1), item)
+        self.assertEqual(Item.objects.get(q2), item)
+
+        # Logically, qs1 and qs2, and qs3 and qs4 should be the same.
+        qs1 = Item.objects.filter(q1) & Item.objects.filter(q2)
+        qs2 = Item.objects.filter(q2) & Item.objects.filter(q1)
+        qs3 = Item.objects.filter(q1) | Item.objects.filter(q2)
+        qs4 = Item.objects.filter(q2) | Item.objects.filter(q1)
+
+        # Regression test for #15823.
+        self.assertEqual(list(qs1), list(qs2))
+        self.assertEqual(list(qs3), list(qs4))

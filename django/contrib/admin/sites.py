@@ -1,17 +1,17 @@
-import re
-from django import http, template
+from functools import update_wrapper
+from django import http
 from django.contrib.admin import ModelAdmin, actions
-from django.contrib.admin.forms import AdminAuthenticationForm, ERROR_MESSAGE
-from django.contrib.auth import REDIRECT_FIELD_NAME, authenticate, login
+from django.contrib.admin.forms import AdminAuthenticationForm
+from django.contrib.auth import REDIRECT_FIELD_NAME
+from django.contrib.contenttypes import views as contenttype_views
 from django.views.decorators.csrf import csrf_protect
 from django.db.models.base import ModelBase
 from django.core.exceptions import ImproperlyConfigured
 from django.core.urlresolvers import reverse
-from django.shortcuts import render_to_response
-from django.utils.functional import update_wrapper
+from django.template.response import TemplateResponse
 from django.utils.safestring import mark_safe
 from django.utils.text import capfirst
-from django.utils.translation import ugettext_lazy, ugettext as _
+from django.utils.translation import ugettext as _
 from django.views.decorators.cache import never_cache
 from django.conf import settings
 
@@ -39,13 +39,9 @@ class AdminSite(object):
     password_change_template = None
     password_change_done_template = None
 
-    def __init__(self, name=None, app_name='admin'):
+    def __init__(self, name='admin', app_name='admin'):
         self._registry = {} # model_class class -> admin_class instance
-        self.root_path = None
-        if name is None:
-            self.name = 'admin'
-        else:
-            self.name = name
+        self.name = name
         self.app_name = app_name
         self._actions = {'delete_selected': actions.delete_selected}
         self._global_actions = self._actions.copy()
@@ -61,6 +57,8 @@ class AdminSite(object):
         they'll be applied as options to the admin class.
 
         If a model is already registered, this will raise AlreadyRegistered.
+
+        If a model is abstract, this will raise ImproperlyConfigured.
         """
         if not admin_class:
             admin_class = ModelAdmin
@@ -74,6 +72,10 @@ class AdminSite(object):
         if isinstance(model_or_iterable, ModelBase):
             model_or_iterable = [model_or_iterable]
         for model in model_or_iterable:
+            if model._meta.abstract:
+                raise ImproperlyConfigured('The model %s is abstract, so it '
+                      'cannot be registered with admin.' % model.__name__)
+
             if model in self._registry:
                 raise AlreadyRegistered('The model %s is already registered' % model.__name__)
 
@@ -225,7 +227,7 @@ class AdminSite(object):
                 wrap(self.i18n_javascript, cacheable=True),
                 name='jsi18n'),
             url(r'^r/(?P<content_type_id>\d+)/(?P<object_id>.+)/$',
-                'django.views.defaults.shortcut'),
+                wrap(contenttype_views.shortcut)),
             url(r'^(?P<app_label>\w+)/$',
                 wrap(self.app_index),
                 name='app_list')
@@ -248,10 +250,7 @@ class AdminSite(object):
         Handles the "change password" task -- both form display and validation.
         """
         from django.contrib.auth.views import password_change
-        if self.root_path is not None:
-            url = '%spassword_change/done/' % self.root_path
-        else:
-            url = reverse('admin:password_change_done', current_app=self.name)
+        url = reverse('admin:password_change_done', current_app=self.name)
         defaults = {
             'current_app': self.name,
             'post_change_redirect': url
@@ -284,7 +283,7 @@ class AdminSite(object):
             from django.views.i18n import javascript_catalog
         else:
             from django.views.i18n import null_javascript_catalog as javascript_catalog
-        return javascript_catalog(request, packages='django.conf')
+        return javascript_catalog(request, packages=['django.conf', 'django.contrib.admin'])
 
     @never_cache
     def logout(self, request, extra_context=None):
@@ -310,7 +309,6 @@ class AdminSite(object):
         from django.contrib.auth.views import login
         context = {
             'title': _('Log in'),
-            'root_path': self.root_path,
             'app_path': request.get_full_path(),
             REDIRECT_FIELD_NAME: request.get_full_path(),
         }
@@ -367,13 +365,11 @@ class AdminSite(object):
         context = {
             'title': _('Site administration'),
             'app_list': app_list,
-            'root_path': self.root_path,
         }
         context.update(extra_context or {})
-        context_instance = template.RequestContext(request, current_app=self.name)
-        return render_to_response(self.index_template or 'admin/index.html', context,
-            context_instance=context_instance
-        )
+        return TemplateResponse(request, [
+            self.index_template or 'admin/index.html',
+        ], context, current_app=self.name)
 
     def app_index(self, request, app_label, extra_context=None):
         user = request.user
@@ -411,14 +407,13 @@ class AdminSite(object):
         context = {
             'title': _('%s administration') % capfirst(app_label),
             'app_list': [app_dict],
-            'root_path': self.root_path,
         }
         context.update(extra_context or {})
-        context_instance = template.RequestContext(request, current_app=self.name)
-        return render_to_response(self.app_index_template or ('admin/%s/app_index.html' % app_label,
-            'admin/app_index.html'), context,
-            context_instance=context_instance
-        )
+
+        return TemplateResponse(request, self.app_index_template or [
+            'admin/%s/app_index.html' % app_label,
+            'admin/app_index.html'
+        ], context, current_app=self.name)
 
 # This global object represents the default admin site, for the common case.
 # You can instantiate AdminSite in your own code to create a custom admin site.

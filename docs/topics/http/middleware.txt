@@ -114,7 +114,7 @@ Django view.
 ``process_template_response()`` must return an
 :class:`~django.template.response.SimpleTemplateResponse` (or its subclass)
 object. It could alter the given ``response`` by changing
-``response.template_name`` and ``response.template_context``, or it could
+``response.template_name`` and ``response.context_data``, or it could
 create and return a brand-new
 :class:`~django.template.response.SimpleTemplateResponse` (or its subclass)
 instance.
@@ -210,4 +210,4 @@ Guidelines
 
     * If you write a middleware component that you think would be useful to
       other people, contribute to the community! :doc:`Let us know
-      </internals/contributing>`, and we'll consider adding it to Django.
+      </internals/contributing/index>`, and we'll consider adding it to Django.

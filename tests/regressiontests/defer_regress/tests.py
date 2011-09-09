@@ -1,13 +1,13 @@
 from operator import attrgetter
 
-from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.sessions.backends.db import SessionStore
-from django.db import connection
+from django.db.models import Count
 from django.db.models.loading import cache
 from django.test import TestCase
 
-from models import ResolveThis, Item, RelatedItem, Child, Leaf
+from models import (ResolveThis, Item, RelatedItem, Child, Leaf, Proxy,
+        SimpleItem, Feature)
 
 
 class DeferRegressionTest(TestCase):
@@ -109,10 +109,13 @@ class DeferRegressionTest(TestCase):
         self.assertEqual(
             klasses, [
                 Child,
+                Feature,
                 Item,
                 Leaf,
+                Proxy,
                 RelatedItem,
                 ResolveThis,
+                SimpleItem,
             ]
         )
 
@@ -128,6 +131,7 @@ class DeferRegressionTest(TestCase):
             klasses, [
                 "Child",
                 "Child_Deferred_value",
+                "Feature",
                 "Item",
                 "Item_Deferred_name",
                 "Item_Deferred_name_other_value_text",
@@ -139,12 +143,33 @@ class DeferRegressionTest(TestCase):
                 "Leaf_Deferred_name_value",
                 "Leaf_Deferred_second_child_value",
                 "Leaf_Deferred_value",
+                "Proxy",
                 "RelatedItem",
                 "RelatedItem_Deferred_",
                 "RelatedItem_Deferred_item_id",
                 "ResolveThis",
+                "SimpleItem",
             ]
         )
+
+        # Regression for #16409 - make sure defer() and only() work with annotate()
+        self.assertIsInstance(list(SimpleItem.objects.annotate(Count('feature')).defer('name')), list)
+        self.assertIsInstance(list(SimpleItem.objects.annotate(Count('feature')).only('name')), list)
+
+    def test_only_and_defer_usage_on_proxy_models(self):
+        # Regression for #15790 - only() broken for proxy models
+        proxy = Proxy.objects.create(name="proxy", value=42)
+
+        msg = 'QuerySet.only() return bogus results with proxy models'
+        dp = Proxy.objects.only('other_value').get(pk=proxy.pk)
+        self.assertEqual(dp.name, proxy.name, msg=msg)
+        self.assertEqual(dp.value, proxy.value, msg=msg)
+
+        # also test things with .defer()
+        msg = 'QuerySet.defer() return bogus results with proxy models'
+        dp = Proxy.objects.defer('name', 'text', 'value').get(pk=proxy.pk)
+        self.assertEqual(dp.name, proxy.name, msg=msg)
+        self.assertEqual(dp.value, proxy.value, msg=msg)
 
     def test_resolve_columns(self):
         rt = ResolveThis.objects.create(num=5.0, name='Foobar')

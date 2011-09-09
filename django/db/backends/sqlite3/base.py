@@ -1,15 +1,14 @@
 """
 SQLite3 backend for django.
 
-Python 2.4 requires pysqlite2 (http://pysqlite.org/).
-
-Python 2.5 and later can use a pysqlite2 module or the sqlite3 module in the
+Works with either the pysqlite2 module or the sqlite3 module in the
 standard library.
 """
 
+import datetime
+import decimal
 import re
 import sys
-import datetime
 
 from django.db import utils
 from django.db.backends import *
@@ -25,14 +24,8 @@ try:
     except ImportError, e1:
         from sqlite3 import dbapi2 as Database
 except ImportError, exc:
-    import sys
     from django.core.exceptions import ImproperlyConfigured
-    if sys.version_info < (2, 5, 0):
-        module = 'pysqlite2 module'
-        exc = e1
-    else:
-        module = 'either pysqlite2 or sqlite3 modules (tried in that order)'
-    raise ImproperlyConfigured("Error loading %s: %s" % (module, exc))
+    raise ImproperlyConfigured("Error loading either pysqlite2 or sqlite3 modules (tried in that order): %s" % exc)
 
 
 DatabaseError = Database.DatabaseError
@@ -96,10 +89,10 @@ class DatabaseOperations(BaseDatabaseOperations):
         # It would be more straightforward if we could use the sqlite strftime
         # function, but it does not allow for keeping six digits of fractional
         # second information, nor does it allow for formatting date and datetime
-        # values differently. So instead we register our own function that 
-        # formats the datetime combined with the delta in a manner suitable 
+        # values differently. So instead we register our own function that
+        # formats the datetime combined with the delta in a manner suitable
         # for comparisons.
-        return  u'django_format_dtdelta(%s, "%s", "%d", "%d", "%d")' % (sql, 
+        return  u'django_format_dtdelta(%s, "%s", "%d", "%d", "%d")' % (sql,
             connector, timedelta.days, timedelta.seconds, timedelta.microseconds)
 
     def date_trunc_sql(self, lookup_type, field_name):
@@ -187,7 +180,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         super(DatabaseWrapper, self).__init__(*args, **kwargs)
 
         self.features = DatabaseFeatures(self)
-        self.ops = DatabaseOperations()
+        self.ops = DatabaseOperations(self)
         self.client = DatabaseClient(self)
         self.creation = DatabaseCreation(self)
         self.introspection = DatabaseIntrospection(self)
@@ -213,6 +206,40 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             connection_created.send(sender=self.__class__, connection=self)
         return self.connection.cursor(factory=SQLiteCursorWrapper)
 
+    def check_constraints(self, table_names=None):
+        """
+        Checks each table name in `table_names` for rows with invalid foreign key references. This method is
+        intended to be used in conjunction with `disable_constraint_checking()` and `enable_constraint_checking()`, to
+        determine if rows with invalid references were entered while constraint checks were off.
+
+        Raises an IntegrityError on the first invalid foreign key reference encountered (if any) and provides
+        detailed information about the invalid reference in the error message.
+
+        Backends can override this method if they can more directly apply constraint checking (e.g. via "SET CONSTRAINTS
+        ALL IMMEDIATE")
+        """
+        cursor = self.cursor()
+        if table_names is None:
+            table_names = self.introspection.get_table_list(cursor)
+        for table_name in table_names:
+            primary_key_column_name = self.introspection.get_primary_key_column(cursor, table_name)
+            if not primary_key_column_name:
+                continue
+            key_columns = self.introspection.get_key_columns(cursor, table_name)
+            for column_name, referenced_table_name, referenced_column_name in key_columns:
+                cursor.execute("""
+                    SELECT REFERRING.`%s`, REFERRING.`%s` FROM `%s` as REFERRING
+                    LEFT JOIN `%s` as REFERRED
+                    ON (REFERRING.`%s` = REFERRED.`%s`)
+                    WHERE REFERRING.`%s` IS NOT NULL AND REFERRED.`%s` IS NULL"""
+                    % (primary_key_column_name, column_name, table_name, referenced_table_name,
+                    column_name, referenced_column_name, column_name, referenced_column_name))
+                for bad_row in cursor.fetchall():
+                    raise utils.IntegrityError("The row in table '%s' with primary key '%s' has an invalid "
+                        "foreign key: %s.%s contains a value '%s' that does not have a corresponding value in %s.%s."
+                        % (table_name, bad_row[0], table_name, column_name, bad_row[1],
+                        referenced_table_name, referenced_column_name))
+
     def close(self):
         # If database is in memory, closing the connection destroys the
         # database. To prevent accidental data loss, ignore close requests on
@@ -220,7 +247,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         if self.settings_dict['NAME'] != ":memory:":
             BaseDatabaseWrapper.close(self)
 
-FORMAT_QMARK_REGEX = re.compile(r'(?![^%])%s')
+FORMAT_QMARK_REGEX = re.compile(r'(?<!%)%s')
 
 class SQLiteCursorWrapper(Database.Cursor):
     """

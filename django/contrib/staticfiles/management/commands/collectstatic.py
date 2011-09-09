@@ -1,13 +1,15 @@
+from __future__ import with_statement
+
 import os
 import sys
-import shutil
 from optparse import make_option
 
-from django.conf import settings
-from django.core.files.storage import get_storage_class
+from django.core.files.storage import FileSystemStorage
 from django.core.management.base import CommandError, NoArgsCommand
+from django.utils.encoding import smart_str, smart_unicode
 
-from django.contrib.staticfiles import finders
+from django.contrib.staticfiles import finders, storage
+
 
 class Command(NoArgsCommand):
     """
@@ -15,172 +17,258 @@ class Command(NoArgsCommand):
     locations to the settings.STATIC_ROOT.
     """
     option_list = NoArgsCommand.option_list + (
-        make_option('--noinput', action='store_false', dest='interactive',
-            default=True, help="Do NOT prompt the user for input of any kind."),
+        make_option('--noinput',
+            action='store_false', dest='interactive', default=True,
+            help="Do NOT prompt the user for input of any kind."),
+        make_option('--no-post-process',
+            action='store_false', dest='post_process', default=True,
+            help="Do NOT post process collected files."),
         make_option('-i', '--ignore', action='append', default=[],
             dest='ignore_patterns', metavar='PATTERN',
             help="Ignore files or directories matching this glob-style "
                 "pattern. Use multiple times to ignore more."),
-        make_option('-n', '--dry-run', action='store_true', dest='dry_run',
-            default=False, help="Do everything except modify the filesystem."),
-        make_option('-l', '--link', action='store_true', dest='link',
-            default=False, help="Create a symbolic link to each file instead of copying."),
+        make_option('-n', '--dry-run',
+            action='store_true', dest='dry_run', default=False,
+            help="Do everything except modify the filesystem."),
+        make_option('-c', '--clear',
+            action='store_true', dest='clear', default=False,
+            help="Clear the existing files using the storage "
+                 "before trying to copy or link the original file."),
+        make_option('-l', '--link',
+            action='store_true', dest='link', default=False,
+            help="Create a symbolic link to each file instead of copying."),
         make_option('--no-default-ignore', action='store_false',
             dest='use_default_ignore_patterns', default=True,
             help="Don't ignore the common private glob-style patterns 'CVS', "
                 "'.*' and '*~'."),
     )
-    help = "Collect static files from apps and other locations in a single location."
+    help = "Collect static files in a single location."
+
+    def __init__(self, *args, **kwargs):
+        super(NoArgsCommand, self).__init__(*args, **kwargs)
+        self.copied_files = []
+        self.symlinked_files = []
+        self.unmodified_files = []
+        self.storage = storage.staticfiles_storage
+        try:
+            self.storage.path('')
+        except NotImplementedError:
+            self.local = False
+        else:
+            self.local = True
+        # Use ints for file times (ticket #14665), if supported
+        if hasattr(os, 'stat_float_times'):
+            os.stat_float_times(False)
 
     def handle_noargs(self, **options):
-        symlink = options['link']
+        self.clear = options['clear']
+        self.dry_run = options['dry_run']
         ignore_patterns = options['ignore_patterns']
         if options['use_default_ignore_patterns']:
             ignore_patterns += ['CVS', '.*', '*~']
-        ignore_patterns = list(set(ignore_patterns))
-        self.copied_files = set()
-        self.symlinked_files = set()
-        self.unmodified_files = set()
-        self.destination_storage = get_storage_class(settings.STATICFILES_STORAGE)()
+        self.ignore_patterns = list(set(ignore_patterns))
+        self.interactive = options['interactive']
+        self.symlink = options['link']
+        self.verbosity = int(options.get('verbosity', 1))
+        self.post_process = options['post_process']
 
-        try:
-            self.destination_storage.path('')
-        except NotImplementedError:
-            self.destination_local = False
-        else:
-            self.destination_local = True
-
-        if symlink:
+        if self.symlink:
             if sys.platform == 'win32':
                 raise CommandError("Symlinking is not supported by this "
                                    "platform (%s)." % sys.platform)
-            if not self.destination_local:
+            if not self.local:
                 raise CommandError("Can't symlink to a remote destination.")
 
         # Warn before doing anything more.
-        if options.get('interactive'):
-            confirm = raw_input("""
-You have requested to collate static files and collect them at the destination
-location as specified in your settings file.
+        if (isinstance(self.storage, FileSystemStorage) and
+                self.storage.location):
+            destination_path = self.storage.location
+            destination_display = ':\n\n    %s' % destination_path
+        else:
+            destination_path = None
+            destination_display = '.'
 
-This will overwrite existing files.
+        if self.clear:
+            clear_display = 'This will DELETE EXISTING FILES!'
+        else:
+            clear_display = 'This will overwrite existing files!'
+
+        if self.interactive:
+            confirm = raw_input(u"""
+You have requested to collect static files at the destination
+location as specified in your settings%s
+
+%s
 Are you sure you want to do this?
 
-Type 'yes' to continue, or 'no' to cancel: """)
+Type 'yes' to continue, or 'no' to cancel: """
+% (destination_display, clear_display))
             if confirm != 'yes':
                 raise CommandError("Collecting static files cancelled.")
 
-        # Use ints for file times (ticket #14665)
-        os.stat_float_times(False)
+        if self.clear:
+            self.clear_dir('')
 
+        handler = {
+            True: self.link_file,
+            False: self.copy_file,
+        }[self.symlink]
+
+        found_files = []
         for finder in finders.get_finders():
-            for source, prefix, storage in finder.list(ignore_patterns):
-                self.copy_file(source, prefix, storage, **options)
+            for path, storage in finder.list(self.ignore_patterns):
+                # Prefix the relative path if the source storage contains it
+                if getattr(storage, 'prefix', None):
+                    prefixed_path = os.path.join(storage.prefix, path)
+                else:
+                    prefixed_path = path
+                found_files.append(prefixed_path)
+                handler(path, prefixed_path, storage)
 
-        verbosity = int(options.get('verbosity', 1))
-        actual_count = len(self.copied_files) + len(self.symlinked_files)
-        unmodified_count = len(self.unmodified_files)
-        if verbosity >= 1:
-            self.stdout.write("\n%s static file%s %s to '%s'%s.\n"
-                              % (actual_count, actual_count != 1 and 's' or '',
-                                 symlink and 'symlinked' or 'copied',
-                                 settings.STATIC_ROOT,
-                                 unmodified_count and ' (%s unmodified)'
-                                 % unmodified_count or ''))
-
-    def copy_file(self, source, prefix, source_storage, **options):
-        """
-        Attempt to copy (or symlink) ``source`` to ``destination``,
-        returning True if successful.
-        """
-        source_path = source_storage.path(source)
-        try:
-            source_last_modified = source_storage.modified_time(source)
-        except (OSError, NotImplementedError):
-            source_last_modified = None
-        if prefix:
-            destination = os.path.join(prefix, source)
+        # Here we check if the storage backend has a post_process
+        # method and pass it the list of modified files.
+        if self.post_process and hasattr(self.storage, 'post_process'):
+            post_processed = self.storage.post_process(found_files, **options)
+            for path in post_processed:
+                self.log(u"Post-processed '%s'" % path, level=1)
         else:
-            destination = source
-        symlink = options['link']
-        dry_run = options['dry_run']
-        verbosity = int(options.get('verbosity', 1))
+            post_processed = []
 
-        if destination in self.copied_files:
-            if verbosity >= 2:
-                self.stdout.write("Skipping '%s' (already copied earlier)\n"
-                                  % destination)
-            return False
+        modified_files = self.copied_files + self.symlinked_files
+        actual_count = len(modified_files)
+        unmodified_count = len(self.unmodified_files)
 
-        if destination in self.symlinked_files:
-            if verbosity >= 2:
-                self.stdout.write("Skipping '%s' (already linked earlier)\n"
-                                  % destination)
-            return False
+        if self.verbosity >= 1:
+            template = ("\n%(actual_count)s %(identifier)s %(action)s"
+                        "%(destination)s%(unmodified)s.\n")
+            summary = template % {
+                'actual_count': actual_count,
+                'identifier': 'static file' + (actual_count > 1 and 's' or ''),
+                'action': self.symlink and 'symlinked' or 'copied',
+                'destination': (destination_path and " to '%s'"
+                                % destination_path or ''),
+                'unmodified': (self.unmodified_files and ', %s unmodified'
+                               % unmodified_count or ''),
+            }
+            self.stdout.write(smart_str(summary))
 
-        if self.destination_storage.exists(destination):
+    def log(self, msg, level=2):
+        """
+        Small log helper
+        """
+        msg = smart_str(msg)
+        if not msg.endswith("\n"):
+            msg += "\n"
+        if self.verbosity >= level:
+            self.stdout.write(msg)
+
+    def clear_dir(self, path):
+        """
+        Deletes the given relative path using the destinatin storage backend.
+        """
+        dirs, files = self.storage.listdir(path)
+        for f in files:
+            fpath = os.path.join(path, f)
+            if self.dry_run:
+                self.log(u"Pretending to delete '%s'" %
+                         smart_unicode(fpath), level=1)
+            else:
+                self.log(u"Deleting '%s'" % smart_unicode(fpath), level=1)
+                self.storage.delete(fpath)
+        for d in dirs:
+            self.clear_dir(os.path.join(path, d))
+
+    def delete_file(self, path, prefixed_path, source_storage):
+        # Whether we are in symlink mode
+        # Checks if the target file should be deleted if it already exists
+        if self.storage.exists(prefixed_path):
             try:
-                destination_last_modified = \
-                    self.destination_storage.modified_time(destination)
+                # When was the target file modified last time?
+                target_last_modified = \
+                    self.storage.modified_time(prefixed_path)
             except (OSError, NotImplementedError):
-                # storage doesn't support ``modified_time`` or failed.
+                # The storage doesn't support ``modified_time`` or failed
                 pass
             else:
-                destination_is_link = os.path.islink(
-                    self.destination_storage.path(destination))
-                if destination_last_modified >= source_last_modified:
-                    if (not symlink and not destination_is_link):
-                        if verbosity >= 2:
-                            self.stdout.write("Skipping '%s' (not modified)\n"
-                                              % destination)
-                        self.unmodified_files.add(destination)
-                        return False
-            if dry_run:
-                if verbosity >= 2:
-                    self.stdout.write("Pretending to delete '%s'\n"
-                                      % destination)
-            else:
-                if verbosity >= 2:
-                    self.stdout.write("Deleting '%s'\n" % destination)
-                self.destination_storage.delete(destination)
-
-        if symlink:
-            destination_path = self.destination_storage.path(destination)
-            if dry_run:
-                if verbosity >= 1:
-                    self.stdout.write("Pretending to symlink '%s' to '%s'\n"
-                                      % (source_path, destination_path))
-            else:
-                if verbosity >= 1:
-                    self.stdout.write("Symlinking '%s' to '%s'\n"
-                                      % (source_path, destination_path))
                 try:
-                    os.makedirs(os.path.dirname(destination_path))
+                    # When was the source file modified last time?
+                    source_last_modified = source_storage.modified_time(path)
+                except (OSError, NotImplementedError):
+                    pass
+                else:
+                    # The full path of the target file
+                    if self.local:
+                        full_path = self.storage.path(prefixed_path)
+                    else:
+                        full_path = None
+                    # Skip the file if the source file is younger
+                    if target_last_modified >= source_last_modified:
+                        if not ((self.symlink and full_path
+                                 and not os.path.islink(full_path)) or
+                                (not self.symlink and full_path
+                                 and os.path.islink(full_path))):
+                            if prefixed_path not in self.unmodified_files:
+                                self.unmodified_files.append(prefixed_path)
+                            self.log(u"Skipping '%s' (not modified)" % path)
+                            return False
+            # Then delete the existing file if really needed
+            if self.dry_run:
+                self.log(u"Pretending to delete '%s'" % path)
+            else:
+                self.log(u"Deleting '%s'" % path)
+                self.storage.delete(prefixed_path)
+        return True
+
+    def link_file(self, path, prefixed_path, source_storage):
+        """
+        Attempt to link ``path``
+        """
+        # Skip this file if it was already copied earlier
+        if prefixed_path in self.symlinked_files:
+            return self.log(u"Skipping '%s' (already linked earlier)" % path)
+        # Delete the target file if needed or break
+        if not self.delete_file(path, prefixed_path, source_storage):
+            return
+        # The full path of the source file
+        source_path = source_storage.path(path)
+        # Finally link the file
+        if self.dry_run:
+            self.log(u"Pretending to link '%s'" % source_path, level=1)
+        else:
+            self.log(u"Linking '%s'" % source_path, level=1)
+            full_path = self.storage.path(prefixed_path)
+            try:
+                os.makedirs(os.path.dirname(full_path))
+            except OSError:
+                pass
+            os.symlink(source_path, full_path)
+        if prefixed_path not in self.symlinked_files:
+            self.symlinked_files.append(prefixed_path)
+
+    def copy_file(self, path, prefixed_path, source_storage):
+        """
+        Attempt to copy ``path`` with storage
+        """
+        # Skip this file if it was already copied earlier
+        if prefixed_path in self.copied_files:
+            return self.log(u"Skipping '%s' (already copied earlier)" % path)
+        # Delete the target file if needed or break
+        if not self.delete_file(path, prefixed_path, source_storage):
+            return
+        # The full path of the source file
+        source_path = source_storage.path(path)
+        # Finally start copying
+        if self.dry_run:
+            self.log(u"Pretending to copy '%s'" % source_path, level=1)
+        else:
+            self.log(u"Copying '%s'" % source_path, level=1)
+            if self.local:
+                full_path = self.storage.path(prefixed_path)
+                try:
+                    os.makedirs(os.path.dirname(full_path))
                 except OSError:
                     pass
-                os.symlink(source_path, destination_path)
-            self.symlinked_files.add(destination)
-        else:
-            if dry_run:
-                if verbosity >= 1:
-                    self.stdout.write("Pretending to copy '%s' to '%s'\n"
-                                      % (source_path, destination))
-            else:
-                if self.destination_local:
-                    destination_path = self.destination_storage.path(destination)
-                    try:
-                        os.makedirs(os.path.dirname(destination_path))
-                    except OSError:
-                        pass
-                    shutil.copy2(source_path, destination_path)
-                    if verbosity >= 1:
-                        self.stdout.write("Copying '%s' to '%s'\n"
-                                          % (source_path, destination_path))
-                else:
-                    source_file = source_storage.open(source)
-                    self.destination_storage.save(destination, source_file)
-                    if verbosity >= 1:
-                        self.stdout.write("Copying %s to %s\n"
-                                          % (source_path, destination))
-            self.copied_files.add(destination)
-        return True
+            with source_storage.open(path) as source_file:
+                self.storage.save(prefixed_path, source_file)
+        if not prefixed_path in self.copied_files:
+            self.copied_files.append(prefixed_path)

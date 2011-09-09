@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import errno
 import shutil
 import sys
 import tempfile
@@ -17,10 +18,11 @@ except ImportError:
 
 from django.conf import settings
 from django.core.exceptions import SuspiciousOperation, ImproperlyConfigured
-from django.core.files.base import ContentFile, File
+from django.core.files.base import ContentFile
 from django.core.files.images import get_image_dimensions
 from django.core.files.storage import FileSystemStorage, get_storage_class
 from django.core.files.uploadedfile import UploadedFile
+from django.test import SimpleTestCase
 from django.utils import unittest
 
 # Try to import PIL in either of the two ways it can end up installed.
@@ -35,14 +37,7 @@ except ImportError:
         Image = None
 
 
-class GetStorageClassTests(unittest.TestCase):
-    def assertRaisesErrorWithMessage(self, error, message, callable,
-        *args, **kwargs):
-        self.assertRaises(error, callable, *args, **kwargs)
-        try:
-            callable(*args, **kwargs)
-        except error, e:
-            self.assertEqual(message, str(e))
+class GetStorageClassTests(SimpleTestCase):
 
     def test_get_filesystem_storage(self):
         """
@@ -56,7 +51,7 @@ class GetStorageClassTests(unittest.TestCase):
         """
         get_storage_class raises an error if the requested import don't exist.
         """
-        self.assertRaisesErrorWithMessage(
+        self.assertRaisesMessage(
             ImproperlyConfigured,
             "NonExistingStorage isn't a storage module.",
             get_storage_class,
@@ -66,7 +61,7 @@ class GetStorageClassTests(unittest.TestCase):
         """
         get_storage_class raises an error if the requested class don't exist.
         """
-        self.assertRaisesErrorWithMessage(
+        self.assertRaisesMessage(
             ImproperlyConfigured,
             'Storage module "django.core.files.storage" does not define a '\
                 '"NonExistingStorage" class.',
@@ -90,13 +85,16 @@ class FileStorageTests(unittest.TestCase):
     storage_class = FileSystemStorage
 
     def setUp(self):
-        self.temp_dir = tempfile.mktemp()
-        os.makedirs(self.temp_dir)
+        self.temp_dir = tempfile.mkdtemp()
         self.storage = self.storage_class(location=self.temp_dir,
             base_url='/test_media_url/')
+        # Set up a second temporary directory which is ensured to have a mixed
+        # case name.
+        self.temp_dir2 = tempfile.mkdtemp(suffix='aBc')
 
     def tearDown(self):
         shutil.rmtree(self.temp_dir)
+        shutil.rmtree(self.temp_dir2)
 
     def test_file_access_options(self):
         """
@@ -106,7 +104,7 @@ class FileStorageTests(unittest.TestCase):
         f = self.storage.open('storage_test', 'w')
         f.write('storage contents')
         f.close()
-        self.assert_(self.storage.exists('storage_test'))
+        self.assertTrue(self.storage.exists('storage_test'))
 
         f = self.storage.open('storage_test', 'r')
         self.assertEqual(f.read(), 'storage contents')
@@ -179,9 +177,26 @@ class FileStorageTests(unittest.TestCase):
 
         self.assertEqual(storage_f_name, f.name)
 
-        self.assert_(os.path.exists(os.path.join(self.temp_dir, f.name)))
+        self.assertTrue(os.path.exists(os.path.join(self.temp_dir, f.name)))
 
         self.storage.delete(storage_f_name)
+
+    def test_file_save_with_path(self):
+        """
+        Saving a pathname should create intermediate directories as necessary.
+        """
+        self.assertFalse(self.storage.exists('path/to'))
+        self.storage.save('path/to/test.file',
+            ContentFile('file saved with path'))
+
+        self.assertTrue(self.storage.exists('path/to'))
+        self.assertEqual(self.storage.open('path/to/test.file').read(),
+            'file saved with path')
+
+        self.assertTrue(os.path.exists(
+            os.path.join(self.temp_dir, 'path', 'to', 'test.file')))
+
+        self.storage.delete('path/to/test.file')
 
     def test_file_path(self):
         """
@@ -204,6 +219,15 @@ class FileStorageTests(unittest.TestCase):
         self.assertEqual(self.storage.url('test.file'),
             '%s%s' % (self.storage.base_url, 'test.file'))
 
+        # should encode special chars except ~!*()'
+        # like encodeURIComponent() JavaScript function do
+        self.assertEqual(self.storage.url(r"""~!*()'@#$%^&*abc`+=.file"""),
+            """/test_media_url/~!*()'%40%23%24%25%5E%26*abc%60%2B%3D.file""")
+
+        # should stanslate os path separator(s) to the url path separator
+        self.assertEqual(self.storage.url("""a/b\\c.file"""),
+            """/test_media_url/a/b/c.file""")
+
         self.storage.base_url = None
         self.assertRaises(ValueError, self.storage.url, 'test.file')
 
@@ -220,7 +244,7 @@ class FileStorageTests(unittest.TestCase):
         f = ContentFile('custom contents')
         f_name = self.storage.save('test.file', f)
 
-        self.assert_(isinstance(
+        self.assertTrue(isinstance(
             self.storage.open('test.file', mixin=TestFileMixin),
             TestFileMixin
         ))
@@ -255,6 +279,95 @@ class FileStorageTests(unittest.TestCase):
         """
         self.assertRaises(SuspiciousOperation, self.storage.exists, '..')
         self.assertRaises(SuspiciousOperation, self.storage.exists, '/etc/passwd')
+
+    def test_file_storage_preserves_filename_case(self):
+        """The storage backend should preserve case of filenames."""
+        # Create a storage backend associated with the mixed case name
+        # directory.
+        temp_storage = self.storage_class(location=self.temp_dir2)
+        # Ask that storage backend to store a file with a mixed case filename.
+        mixed_case = 'CaSe_SeNsItIvE'
+        file = temp_storage.open(mixed_case, 'w')
+        file.write('storage contents')
+        file.close()
+        self.assertEqual(os.path.join(self.temp_dir2, mixed_case),
+                         temp_storage.path(mixed_case))
+        temp_storage.delete(mixed_case)
+
+    def test_makedirs_race_handling(self):
+        """
+        File storage should be robust against directory creation race conditions.
+        """
+        real_makedirs = os.makedirs
+
+        # Monkey-patch os.makedirs, to simulate a normal call, a raced call,
+        # and an error.
+        def fake_makedirs(path):
+            if path == os.path.join(self.temp_dir, 'normal'):
+                real_makedirs(path)
+            elif path == os.path.join(self.temp_dir, 'raced'):
+                real_makedirs(path)
+                raise OSError(errno.EEXIST, 'simulated EEXIST')
+            elif path == os.path.join(self.temp_dir, 'error'):
+                raise OSError(errno.EACCES, 'simulated EACCES')
+            else:
+                self.fail('unexpected argument %r' % path)
+
+        try:
+            os.makedirs = fake_makedirs
+
+            self.storage.save('normal/test.file',
+                ContentFile('saved normally'))
+            self.assertEqual(self.storage.open('normal/test.file').read(),
+                'saved normally')
+
+            self.storage.save('raced/test.file',
+                ContentFile('saved with race'))
+            self.assertEqual(self.storage.open('raced/test.file').read(),
+                'saved with race')
+
+            # Check that OSErrors aside from EEXIST are still raised.
+            self.assertRaises(OSError,
+                self.storage.save, 'error/test.file', ContentFile('not saved'))
+        finally:
+            os.makedirs = real_makedirs
+
+    def test_remove_race_handling(self):
+        """
+        File storage should be robust against file removal race conditions.
+        """
+        real_remove = os.remove
+
+        # Monkey-patch os.remove, to simulate a normal call, a raced call,
+        # and an error.
+        def fake_remove(path):
+            if path == os.path.join(self.temp_dir, 'normal.file'):
+                real_remove(path)
+            elif path == os.path.join(self.temp_dir, 'raced.file'):
+                real_remove(path)
+                raise OSError(errno.ENOENT, 'simulated ENOENT')
+            elif path == os.path.join(self.temp_dir, 'error.file'):
+                raise OSError(errno.EACCES, 'simulated EACCES')
+            else:
+                self.fail('unexpected argument %r' % path)
+
+        try:
+            os.remove = fake_remove
+
+            self.storage.save('normal.file', ContentFile('delete normally'))
+            self.storage.delete('normal.file')
+            self.assertFalse(self.storage.exists('normal.file'))
+
+            self.storage.save('raced.file', ContentFile('delete with race'))
+            self.storage.delete('raced.file')
+            self.assertFalse(self.storage.exists('normal.file'))
+
+            # Check that OSErrors aside from ENOENT are still raised.
+            self.storage.save('error.file', ContentFile('delete with error'))
+            self.assertRaises(OSError, self.storage.delete, 'error.file')
+        finally:
+            os.remove = real_remove
+
 
 class CustomStorage(FileSystemStorage):
     def get_available_name(self, name):
@@ -316,8 +429,8 @@ class FileSaveRaceConditionTest(unittest.TestCase):
         self.thread.start()
         name = self.save_file('conflict')
         self.thread.join()
-        self.assert_(self.storage.exists('conflict'))
-        self.assert_(self.storage.exists('conflict_1'))
+        self.assertTrue(self.storage.exists('conflict'))
+        self.assertTrue(self.storage.exists('conflict_1'))
         self.storage.delete('conflict')
         self.storage.delete('conflict_1')
 
@@ -357,8 +470,8 @@ class FileStoragePathParsing(unittest.TestCase):
         self.storage.save('dotted.path/test', ContentFile("2"))
 
         self.assertFalse(os.path.exists(os.path.join(self.storage_dir, 'dotted_.path')))
-        self.assert_(os.path.exists(os.path.join(self.storage_dir, 'dotted.path/test')))
-        self.assert_(os.path.exists(os.path.join(self.storage_dir, 'dotted.path/test_1')))
+        self.assertTrue(os.path.exists(os.path.join(self.storage_dir, 'dotted.path/test')))
+        self.assertTrue(os.path.exists(os.path.join(self.storage_dir, 'dotted.path/test_1')))
 
     def test_first_character_dot(self):
         """
@@ -368,13 +481,13 @@ class FileStoragePathParsing(unittest.TestCase):
         self.storage.save('dotted.path/.test', ContentFile("1"))
         self.storage.save('dotted.path/.test', ContentFile("2"))
 
-        self.assert_(os.path.exists(os.path.join(self.storage_dir, 'dotted.path/.test')))
+        self.assertTrue(os.path.exists(os.path.join(self.storage_dir, 'dotted.path/.test')))
         # Before 2.6, a leading dot was treated as an extension, and so
         # underscore gets added to beginning instead of end.
         if sys.version_info < (2, 6):
-            self.assert_(os.path.exists(os.path.join(self.storage_dir, 'dotted.path/_1.test')))
+            self.assertTrue(os.path.exists(os.path.join(self.storage_dir, 'dotted.path/_1.test')))
         else:
-            self.assert_(os.path.exists(os.path.join(self.storage_dir, 'dotted.path/.test_1')))
+            self.assertTrue(os.path.exists(os.path.join(self.storage_dir, 'dotted.path/.test_1')))
 
 class DimensionClosingBug(unittest.TestCase):
     """
@@ -389,7 +502,7 @@ class DimensionClosingBug(unittest.TestCase):
         try:
             get_image_dimensions(empty_io)
         finally:
-            self.assert_(not empty_io.closed)
+            self.assertTrue(not empty_io.closed)
 
     @unittest.skipUnless(Image, "PIL not installed")
     def test_closing_of_filenames(self):
@@ -421,7 +534,7 @@ class DimensionClosingBug(unittest.TestCase):
             get_image_dimensions(os.path.join(os.path.dirname(__file__), "test1.png"))
         finally:
             del images.open
-        self.assert_(FileWrapper._closed)
+        self.assertTrue(FileWrapper._closed)
 
 class InconsistentGetImageDimensionsBug(unittest.TestCase):
     """

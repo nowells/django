@@ -22,12 +22,14 @@ TEST_DATA = (
 
     (validate_email, 'email@here.com', None),
     (validate_email, 'weirder-email@here.and.there.com', None),
+    (validate_email, 'email@[127.0.0.1]', None),
 
     (validate_email, None, ValidationError),
     (validate_email, '', ValidationError),
     (validate_email, 'abc', ValidationError),
     (validate_email, 'a @x.cz', ValidationError),
     (validate_email, 'something@@somewhere.com', ValidationError),
+    (validate_email, 'email@127.0.0.1', ValidationError),
 
     (validate_slug, 'slug-ok', None),
     (validate_slug, 'longer-slug-still-ok', None),
@@ -49,6 +51,31 @@ TEST_DATA = (
     (validate_ipv4_address, '25.1.1.', ValidationError),
     (validate_ipv4_address, '25,1,1,1', ValidationError),
     (validate_ipv4_address, '25.1 .1.1', ValidationError),
+
+    # validate_ipv6_address uses django.utils.ipv6, which
+    # is tested in much greater detail in it's own testcase
+    (validate_ipv6_address, 'fe80::1', None),
+    (validate_ipv6_address, '::1', None),
+    (validate_ipv6_address, '1:2:3:4:5:6:7:8', None),
+
+    (validate_ipv6_address, '1:2', ValidationError),
+    (validate_ipv6_address, '::zzz', ValidationError),
+    (validate_ipv6_address, '12345::', ValidationError),
+
+    (validate_ipv46_address, '1.1.1.1', None),
+    (validate_ipv46_address, '255.0.0.0', None),
+    (validate_ipv46_address, '0.0.0.0', None),
+    (validate_ipv46_address, 'fe80::1', None),
+    (validate_ipv46_address, '::1', None),
+    (validate_ipv46_address, '1:2:3:4:5:6:7:8', None),
+
+    (validate_ipv46_address, '256.1.1.1', ValidationError),
+    (validate_ipv46_address, '25.1.1.', ValidationError),
+    (validate_ipv46_address, '25,1,1,1', ValidationError),
+    (validate_ipv46_address, '25.1 .1.1', ValidationError),
+    (validate_ipv46_address, '1:2', ValidationError),
+    (validate_ipv46_address, '::zzz', ValidationError),
+    (validate_ipv46_address, '12345::', ValidationError),
 
     (validate_comma_separated_integer_list, '1', None),
     (validate_comma_separated_integer_list, '1,2,3', None),
@@ -112,6 +139,11 @@ TEST_DATA = (
     (BaseValidator(True), True, None),
     (BaseValidator(True), False, ValidationError),
 
+    (RegexValidator(), '', None),
+    (RegexValidator(), 'x1x2', None),
+    (RegexValidator('[0-9]+'), 'xxxxxx', ValidationError),
+    (RegexValidator('[0-9]+'), '1234', None),
+    (RegexValidator(re.compile('[0-9]+')), '1234', None),
     (RegexValidator('.*'), '', None),
     (RegexValidator(re.compile('.*')), '', None),
     (RegexValidator('.*'), 'xxxxx', None),
@@ -141,18 +173,18 @@ def create_simple_test_method(validator, expected, value, num):
 class TestSimpleValidators(TestCase):
     def test_single_message(self):
         v = ValidationError('Not Valid')
-        self.assertEquals(str(v), "[u'Not Valid']")
-        self.assertEquals(repr(v), "ValidationError([u'Not Valid'])")
+        self.assertEqual(str(v), "[u'Not Valid']")
+        self.assertEqual(repr(v), "ValidationError([u'Not Valid'])")
 
     def test_message_list(self):
         v = ValidationError(['First Problem', 'Second Problem'])
-        self.assertEquals(str(v), "[u'First Problem', u'Second Problem']")
-        self.assertEquals(repr(v), "ValidationError([u'First Problem', u'Second Problem'])")
+        self.assertEqual(str(v), "[u'First Problem', u'Second Problem']")
+        self.assertEqual(repr(v), "ValidationError([u'First Problem', u'Second Problem'])")
 
     def test_message_dict(self):
         v = ValidationError({'first': 'First Problem'})
-        self.assertEquals(str(v), "{'first': 'First Problem'}")
-        self.assertEquals(repr(v), "ValidationError({'first': 'First Problem'})")
+        self.assertEqual(str(v), "{'first': 'First Problem'}")
+        self.assertEqual(repr(v), "ValidationError({'first': 'First Problem'})")
 
 test_counter = 0
 for validator, value, expected in TEST_DATA:

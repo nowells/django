@@ -1,12 +1,13 @@
+from __future__ import with_statement
+
 import datetime
 
-from django.conf import settings
-from django.db import connection
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import unittest
 
 from models import (CustomPKModel, UniqueTogetherModel, UniqueFieldsModel,
-    UniqueForDateModel, ModelToValidate)
+    UniqueForDateModel, ModelToValidate, Post, FlexibleDatePost, UniqueErrorsModel)
 
 
 class GetUniqueCheckTests(unittest.TestCase):
@@ -76,3 +77,70 @@ class PerformUniqueChecksTest(TestCase):
             mtv = ModelToValidate(number=10, name='Some Name')
             mtv.full_clean()
         self.assertNumQueries(0, test)
+
+    def test_unique_for_date(self):
+        p1 = Post.objects.create(title="Django 1.0 is released",
+            slug="Django 1.0", subtitle="Finally", posted=datetime.date(2008, 9, 3))
+
+        p = Post(title="Django 1.0 is released", posted=datetime.date(2008, 9, 3))
+        with self.assertRaises(ValidationError) as cm:
+            p.full_clean()
+        self.assertEqual(cm.exception.message_dict, {'title': [u'Title must be unique for Posted date.']})
+
+        # Should work without errors
+        p = Post(title="Work on Django 1.1 begins", posted=datetime.date(2008, 9, 3))
+        p.full_clean()
+
+        # Should work without errors
+        p = Post(title="Django 1.0 is released", posted=datetime.datetime(2008, 9,4))
+        p.full_clean()
+
+        p = Post(slug="Django 1.0", posted=datetime.datetime(2008, 1, 1))
+        with self.assertRaises(ValidationError) as cm:
+            p.full_clean()
+        self.assertEqual(cm.exception.message_dict, {'slug': [u'Slug must be unique for Posted year.']})
+
+        p = Post(subtitle="Finally", posted=datetime.datetime(2008, 9, 30))
+        with self.assertRaises(ValidationError) as cm:
+            p.full_clean()
+        self.assertEqual(cm.exception.message_dict, {'subtitle': [u'Subtitle must be unique for Posted month.']})
+
+        p = Post(title="Django 1.0 is released")
+        with self.assertRaises(ValidationError) as cm:
+            p.full_clean()
+        self.assertEqual(cm.exception.message_dict, {'posted': [u'This field cannot be null.']})
+
+    def test_unique_for_date_with_nullable_date(self):
+        p1 = FlexibleDatePost.objects.create(title="Django 1.0 is released",
+            slug="Django 1.0", subtitle="Finally", posted=datetime.date(2008, 9, 3))
+
+        p = FlexibleDatePost(title="Django 1.0 is released")
+        try:
+            p.full_clean()
+        except ValidationError, e:
+            self.fail("unique_for_date checks shouldn't trigger when the associated DateField is None.")
+
+        p = FlexibleDatePost(slug="Django 1.0")
+        try:
+            p.full_clean()
+        except ValidationError, e:
+            self.fail("unique_for_year checks shouldn't trigger when the associated DateField is None.")
+
+        p = FlexibleDatePost(subtitle="Finally")
+        try:
+            p.full_clean()
+        except ValidationError, e:
+            self.fail("unique_for_month checks shouldn't trigger when the associated DateField is None.")
+
+    def test_unique_errors(self):
+        m1 = UniqueErrorsModel.objects.create(name='Some Name', no=10)
+        m = UniqueErrorsModel(name='Some Name', no=11)
+        with self.assertRaises(ValidationError) as cm:
+            m.full_clean()
+        self.assertEqual(cm.exception.message_dict, {'name': [u'Custom unique name message.']})
+
+        m = UniqueErrorsModel(name='Some Other Name', no=10)
+        with self.assertRaises(ValidationError) as cm:
+            m.full_clean()
+        self.assertEqual(cm.exception.message_dict, {'no': [u'Custom unique number message.']})
+

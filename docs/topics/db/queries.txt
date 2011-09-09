@@ -75,7 +75,7 @@ The ``save()`` method has no return value.
     ``save()`` takes a number of advanced options not described here.
     See the documentation for ``save()`` for complete details.
 
-    To create an object and save it all in one step see the ```create()```
+    To create an object and save it all in one step see the ``create()``
     method.
 
 Saving changes to objects
@@ -112,6 +112,15 @@ method on the field to add a record to the relation. This example adds the
     >>> from blog.models import Author
     >>> joe = Author.objects.create(name="Joe")
     >>> entry.authors.add(joe)
+
+To add multiple records to a ``ManyToManyField`` in one go, include multiple
+arguments in the call to ``add()``, like this::
+
+    >>> john = Author.objects.create(name="John")
+    >>> paul = Author.objects.create(name="Paul")
+    >>> george = Author.objects.create(name="George")
+    >>> ringo = Author.objects.create(name="Ringo")
+    >>> entry.authors.add(john, paul, george, ringo)
 
 Django will complain if you try to assign or add an object of the wrong type.
 
@@ -365,6 +374,16 @@ translates (roughly) into the following SQL::
 
    .. _`Keyword Arguments`: http://docs.python.org/tutorial/controlflow.html#keyword-arguments
 
+.. versionchanged:: 1.4
+
+    The field specified in a lookup has to be the name of a model field.
+    There's one exception though, in case of a
+    :class:`~django.db.models.fields.ForeignKey` you can specify the field
+    name suffixed with ``_id``. In this case, the value parameter is expected
+    to contain the raw value of the foreign model's primary key. For example::
+
+        >>> Entry.objects.filter(blog_id__exact=4)
+
 If you pass an invalid keyword argument, a lookup function will raise
 ``TypeError``.
 
@@ -540,7 +559,7 @@ references can then be used in query filters to compare the values of two
 different fields on the same model instance.
 
 For example, to find a list of all blog entries that have had more comments
-than pingbacks, we construct an ``F()`` object to reference the comment count,
+than pingbacks, we construct an ``F()`` object to reference the pingback count,
 and use that ``F()`` object in the query::
 
     >>> from django.db.models import F
@@ -572,7 +591,7 @@ issue the query::
 For date and date/time fields, you can add or subtract a ``datetime.timedelta``
 object.  The following would return all entries that were modified more than 3 days
 after they were published::
-   
+
     >>> from datetime import timedelta
     >>> Entry.objects.filter(mod_date__gt=F('pub_date') + timedelta(days=3))
 
@@ -679,6 +698,7 @@ collection of keyword arguments. These keyword arguments are specified as in
 
 For example, this ``Q`` object encapsulates a single ``LIKE`` query::
 
+    from django.db.models import Q
     Q(question__startswith='What')
 
 ``Q`` objects can be combined using the ``&`` and ``|`` operators. When an

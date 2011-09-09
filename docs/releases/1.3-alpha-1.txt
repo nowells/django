@@ -249,7 +249,7 @@ framework, we have "fixed" the problem by making the list of
 prohibited words an empty list.
 
 If you want to restore the old behavior, simply put a
-``PROFANITIES_LIST`` setting in your settings file that includes the
+:setting:`PROFANITIES_LIST` setting in your settings file that includes the
 words that you want to prohibit (see the `commit that implemented this
 change`_ if you want to see the list of words that was historically
 prohibited). However, if avoiding profanities is important to you, you
@@ -279,10 +279,8 @@ over the next few release cycles.
 
 Code taking advantage of any of the features below will raise a
 ``PendingDeprecationWarning`` in Django 1.3. This warning will be
-silent by default, but may be turned on using Python's `warnings
-module`_, or by running Python with a ``-Wd`` or `-Wall` flag.
-
-.. _warnings module: http://docs.python.org/library/warnings.html
+silent by default, but may be turned on using Python's :mod:`warnings`
+module, or by running Python with a ``-Wd`` or `-Wall` flag.
 
 In Django 1.4, these warnings will become a ``DeprecationWarning``,
 which is *not* silent. In Django 1.5 support for these features will
@@ -392,7 +390,7 @@ discussions there.
 Django's online documentation also includes pointers on how to contribute to
 Django:
 
-    * :doc:`How to contribute to Django </internals/contributing>`
+    * :doc:`How to contribute to Django </internals/contributing/index>`
 
 Contributions on any level -- developing code, writing documentation or simply
 triaging tickets and helping to test proposed bugfixes -- are always welcome and

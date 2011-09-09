@@ -7,13 +7,14 @@ from django.utils.safestring import SafeData, mark_safe
 from django.utils.encoding import force_unicode
 from django.utils.functional import allow_lazy
 from django.utils.http import urlquote
+from django.utils.text import normalize_newlines
 
 # Configuration for urlize() function.
 LEADING_PUNCTUATION  = ['(', '<', '&lt;']
 TRAILING_PUNCTUATION = ['.', ',', ')', '>', '\n', '&gt;']
 
 # List of possible strings used for bullets in bulleted lists.
-DOTS = ['&middot;', '*', '\xe2\x80\xa2', '&#149;', '&bull;', '&#8226;']
+DOTS = [u'&middot;', u'*', u'\u2022', u'&#149;', u'&bull;', u'&#8226;']
 
 unencoded_ampersands_re = re.compile(r'&(?!(\w+|#\d+);)')
 word_split_re = re.compile(r'(\s+)')
@@ -70,7 +71,7 @@ def conditional_escape(html):
 
 def linebreaks(value, autoescape=False):
     """Converts newlines into <p> and <br />s."""
-    value = re.sub(r'\r\n|\r|\n', '\n', force_unicode(value)) # normalize newlines
+    value = normalize_newlines(value)
     paras = re.split('\n{2,}', value)
     if autoescape:
         paras = [u'<p>%s</p>' % escape(p).replace('\n', '<br />') for p in paras]
@@ -180,13 +181,13 @@ def clean_html(text):
     text = html_gunk_re.sub('', text)
     # Convert hard-coded bullets into HTML unordered lists.
     def replace_p_tags(match):
-        s = match.group().replace('</p>', '</li>')
+        s = match.group().replace(u'</p>', u'</li>')
         for d in DOTS:
-            s = s.replace('<p>%s' % d, '<li>')
+            s = s.replace(u'<p>%s' % d, u'<li>')
         return u'<ul>\n%s\n</ul>' % s
     text = hard_coded_bullets_re.sub(replace_p_tags, text)
     # Remove stuff like "<p>&nbsp;&nbsp;</p>", but only if it's at the bottom
     # of the text.
-    text = trailing_empty_content_re.sub('', text)
+    text = trailing_empty_content_re.sub(u'', text)
     return text
 clean_html = allow_lazy(clean_html, unicode)

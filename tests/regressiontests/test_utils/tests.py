@@ -1,21 +1,13 @@
-import sys
+from __future__ import with_statement
 
-from django.test import TestCase, skipUnlessDBFeature, skipIfDBFeature
+from django.forms import EmailField
+from django.test import SimpleTestCase, TestCase, skipUnlessDBFeature
+from django.utils.unittest import skip
 
-
-if sys.version_info >= (2, 5):
-    from tests_25 import AssertNumQueriesTests
+from models import Person
 
 
 class SkippingTestCase(TestCase):
-    def test_assert_num_queries(self):
-        def test_func():
-            raise ValueError
-
-        self.assertRaises(ValueError,
-            self.assertNumQueries, 2, test_func
-        )
-
     def test_skip_unless_db_feature(self):
         "A test that might be skipped is actually called."
         # Total hack, but it works, just want an attribute that's always true.
@@ -26,8 +18,77 @@ class SkippingTestCase(TestCase):
         self.assertRaises(ValueError, test_func)
 
 
-class SaveRestoreWarningState(TestCase):
+class AssertNumQueriesTests(TestCase):
+    urls = 'regressiontests.test_utils.urls'
 
+    def test_assert_num_queries(self):
+        def test_func():
+            raise ValueError
+
+        self.assertRaises(ValueError,
+            self.assertNumQueries, 2, test_func
+        )
+
+    def test_assert_num_queries_with_client(self):
+        person = Person.objects.create(name='test')
+
+        self.assertNumQueries(
+            1,
+            self.client.get,
+            "/test_utils/get_person/%s/" % person.pk
+        )
+
+        self.assertNumQueries(
+            1,
+            self.client.get,
+            "/test_utils/get_person/%s/" % person.pk
+        )
+
+        def test_func():
+            self.client.get("/test_utils/get_person/%s/" % person.pk)
+            self.client.get("/test_utils/get_person/%s/" % person.pk)
+        self.assertNumQueries(2, test_func)
+
+
+class AssertNumQueriesContextManagerTests(TestCase):
+    urls = 'regressiontests.test_utils.urls'
+
+    def test_simple(self):
+        with self.assertNumQueries(0):
+            pass
+
+        with self.assertNumQueries(1):
+            Person.objects.count()
+
+        with self.assertNumQueries(2):
+            Person.objects.count()
+            Person.objects.count()
+
+    def test_failure(self):
+        with self.assertRaises(AssertionError) as exc_info:
+            with self.assertNumQueries(2):
+                Person.objects.count()
+        self.assertIn("1 queries executed, 2 expected", str(exc_info.exception))
+
+        with self.assertRaises(TypeError):
+            with self.assertNumQueries(4000):
+                raise TypeError
+
+    def test_with_client(self):
+        person = Person.objects.create(name="test")
+
+        with self.assertNumQueries(1):
+            self.client.get("/test_utils/get_person/%s/" % person.pk)
+
+        with self.assertNumQueries(1):
+            self.client.get("/test_utils/get_person/%s/" % person.pk)
+
+        with self.assertNumQueries(2):
+            self.client.get("/test_utils/get_person/%s/" % person.pk)
+            self.client.get("/test_utils/get_person/%s/" % person.pk)
+
+
+class SaveRestoreWarningState(TestCase):
     def test_save_restore_warnings_state(self):
         """
         Ensure save_warnings_state/restore_warnings_state work correctly.
@@ -54,6 +115,40 @@ class SaveRestoreWarningState(TestCase):
 
         # Remove the filter we just added.
         self.restore_warnings_state()
+
+
+class SkippingExtraTests(TestCase):
+    fixtures = ['should_not_be_loaded.json']
+
+    # HACK: This depends on internals of our TestCase subclasses
+    def __call__(self, result=None):
+        # Detect fixture loading by counting SQL queries, should be zero
+        with self.assertNumQueries(0):
+            super(SkippingExtraTests, self).__call__(result)
+
+    @skip("Fixture loading should not be performed for skipped tests.")
+    def test_fixtures_are_skipped(self):
+        pass
+
+
+class AssertRaisesMsgTest(SimpleTestCase):
+
+    def test_special_re_chars(self):
+        """assertRaisesMessage shouldn't interpret RE special chars."""
+        def func1():
+            raise ValueError("[.*x+]y?")
+        self.assertRaisesMessage(ValueError, "[.*x+]y?", func1)
+
+
+class AssertFieldOutputTests(SimpleTestCase):
+
+    def test_assert_field_output(self):
+        error_invalid = [u'Enter a valid e-mail address.']
+        self.assertFieldOutput(EmailField, {'a@a.com': 'a@a.com'}, {'aaa': error_invalid})
+        self.assertRaises(AssertionError, self.assertFieldOutput, EmailField, {'a@a.com': 'a@a.com'}, {'aaa': error_invalid + [u'Another error']})
+        self.assertRaises(AssertionError, self.assertFieldOutput, EmailField, {'a@a.com': 'Wrong output'}, {'aaa': error_invalid})
+        self.assertRaises(AssertionError, self.assertFieldOutput, EmailField, {'a@a.com': 'a@a.com'}, {'aaa': [u'Come on, gimme some well formatted data, dude.']})
+
 
 __test__ = {"API_TEST": r"""
 # Some checks of the doctest output normalizer.

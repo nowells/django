@@ -11,11 +11,6 @@ from django.utils.translation import activate, deactivate_all, get_language, str
 from django.utils.encoding import force_unicode, smart_str
 from django.utils.datastructures import SortedDict
 
-try:
-    all
-except NameError:
-    from django.utils.itercompat import all
-
 # Calculate the verbose_name by converting from InitialCaps to "lowercase with spaces".
 get_verbose_name = lambda class_name: re.sub('(((?<=[a-z])[A-Z])|([A-Z](?![A-Z]|$)))', ' \\1', class_name).lower().strip()
 
@@ -54,6 +49,10 @@ class Options(object):
         # managers came from (concrete or abstract base classes).
         self.abstract_managers = []
         self.concrete_managers = []
+
+        # List of all lookups defined in ForeignKey 'limit_choices_to' options
+        # from *other* models. Needed for some admin checks. Internal use only.
+        self.related_fkey_lookups = []
 
     def contribute_to_class(self, cls, name):
         from django.db import connection
@@ -119,6 +118,12 @@ class Options(object):
                 # Promote the first parent link in lieu of adding yet another
                 # field.
                 field = self.parents.value_for_index(0)
+                # Look for a local field with the same name as the
+                # first parent link. If a local field has already been
+                # created, use it instead of promoting the parent
+                already_created = [fld for fld in self.local_fields if fld.name == field.name]
+                if already_created:
+                    field = already_created[0]
                 field.primary_key = True
                 self.setup_pk(field)
             else:
@@ -371,16 +376,16 @@ class Options(object):
         cache = SortedDict()
         parent_list = self.get_parent_list()
         for parent in self.parents:
-            for obj, model in parent._meta.get_all_related_objects_with_model():
+            for obj, model in parent._meta.get_all_related_objects_with_model(include_hidden=True):
                 if (obj.field.creation_counter < 0 or obj.field.rel.parent_link) and obj.model not in parent_list:
                     continue
                 if not model:
                     cache[obj] = parent
                 else:
                     cache[obj] = model
-        for klass in get_models(include_auto_created=True):
+        for klass in get_models(include_auto_created=True, only_installed=False):
             for f in klass._meta.local_fields:
-                if f.rel and not isinstance(f.rel.to, str) and self == f.rel.to._meta:
+                if f.rel and not isinstance(f.rel.to, basestring) and self == f.rel.to._meta:
                     cache[RelatedObject(f.rel.to, klass, f)] = None
         self._related_objects_cache = cache
 
@@ -415,9 +420,9 @@ class Options(object):
                     cache[obj] = parent
                 else:
                     cache[obj] = model
-        for klass in get_models():
+        for klass in get_models(only_installed=False):
             for f in klass._meta.local_many_to_many:
-                if f.rel and not isinstance(f.rel.to, str) and self == f.rel.to._meta:
+                if f.rel and not isinstance(f.rel.to, basestring) and self == f.rel.to._meta:
                     cache[RelatedObject(f.rel.to, klass, f)] = None
         if app_cache_ready():
             self._related_many_to_many_cache = cache

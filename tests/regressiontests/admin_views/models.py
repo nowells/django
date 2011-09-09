@@ -133,6 +133,13 @@ class ArticleAdmin(admin.ModelAdmin):
         ).send()
         return super(ArticleAdmin, self).save_model(request, obj, form, change)
 
+class RowLevelChangePermissionModel(models.Model):
+    name = models.CharField(max_length=100, blank=True)
+
+class RowLevelChangePermissionModelAdmin(admin.ModelAdmin):
+    def has_change_permission(self, request, obj=None):
+        """ Only allow changing objects with even id number """
+        return request.user.is_staff and (obj is not None) and (obj.id % 2 == 0)
 
 class CustomArticle(models.Model):
     content = models.TextField()
@@ -178,6 +185,36 @@ class Thing(models.Model):
 class ThingAdmin(admin.ModelAdmin):
     list_filter = ('color__warm', 'color__value')
 
+class Actor(models.Model):
+    name = models.CharField(max_length=50)
+    age = models.IntegerField()
+    def __unicode__(self):
+        return self.name
+
+class Inquisition(models.Model):
+    expected = models.BooleanField()
+    leader = models.ForeignKey(Actor)
+    country = models.CharField(max_length=20)
+
+    def __unicode__(self):
+        return u"by %s from %s" % (self.leader, self.country)
+
+class InquisitionAdmin(admin.ModelAdmin):
+    list_display = ('leader', 'country', 'expected')
+
+class Sketch(models.Model):
+    title = models.CharField(max_length=100)
+    inquisition = models.ForeignKey(Inquisition, limit_choices_to={'leader__name': 'Palin',
+                                                                   'leader__age': 27,
+                                                                   'expected': False,
+                                                                   })
+
+    def __unicode__(self):
+        return self.title
+
+class SketchAdmin(admin.ModelAdmin):
+    raw_id_fields = ('inquisition',)
+
 class Fabric(models.Model):
     NG_CHOICES = (
         ('Textured', (
@@ -206,28 +243,29 @@ class Person(models.Model):
     def __unicode__(self):
         return self.name
 
-    class Meta:
-        ordering = ["id"]
-
 class BasePersonModelFormSet(BaseModelFormSet):
     def clean(self):
         for person_dict in self.cleaned_data:
             person = person_dict.get('id')
             alive = person_dict.get('alive')
             if person and alive and person.name == "Grace Hopper":
-                raise forms.ValidationError, "Grace is not a Zombie"
+                raise forms.ValidationError("Grace is not a Zombie")
 
 class PersonAdmin(admin.ModelAdmin):
     list_display = ('name', 'gender', 'alive')
     list_editable = ('gender', 'alive')
     list_filter = ('gender',)
-    search_fields = (u'name',)
-    ordering = ["id"]
+    search_fields = ('^name',)
     save_as = True
 
     def get_changelist_formset(self, request, **kwargs):
         return super(PersonAdmin, self).get_changelist_formset(request,
             formset=BasePersonModelFormSet, **kwargs)
+
+    def queryset(self, request):
+        # Order by a field that isn't in list display, to be able to test
+        # whether ordering is preserved.
+        return super(PersonAdmin, self).queryset(request).order_by('age')
 
 
 class Persona(models.Model):
@@ -304,19 +342,24 @@ def external_mail(modeladmin, request, selected):
         'from@example.com',
         ['to@example.com']
     ).send()
+external_mail.short_description = 'External mail (Another awesome action)'
 
 def redirect_to(modeladmin, request, selected):
     from django.http import HttpResponseRedirect
     return HttpResponseRedirect('/some-where-else/')
+redirect_to.short_description = 'Redirect to (Awesome action)'
 
 class ExternalSubscriberAdmin(admin.ModelAdmin):
-    actions = [external_mail, redirect_to]
+    actions = [redirect_to, external_mail]
 
 class Media(models.Model):
     name = models.CharField(max_length=60)
 
 class Podcast(Media):
     release_date = models.DateField()
+
+    class Meta:
+        ordering = ('release_date',) # overridden in PodcastAdmin
 
 class PodcastAdmin(admin.ModelAdmin):
     list_display = ('name', 'release_date')
@@ -347,6 +390,16 @@ class ChildInline(admin.StackedInline):
 class ParentAdmin(admin.ModelAdmin):
     model = Parent
     inlines = [ChildInline]
+
+    list_editable = ('name',)
+
+    def save_related(self, request, form, formsets, change):
+        super(ParentAdmin, self).save_related(request, form, formsets, change)
+        first_name, last_name = form.instance.name.split()
+        for child in form.instance.child_set.all():
+            if len(child.name.split()) < 2:
+                child.name = child.name + ' ' + last_name
+                child.save()
 
 class EmptyModel(models.Model):
     def __unicode__(self):
@@ -408,7 +461,7 @@ class Recommendation(Title):
     recommender = models.ForeignKey(Recommender)
 
 class RecommendationAdmin(admin.ModelAdmin):
-    search_fields = ('titletranslation__text', 'recommender__titletranslation__text',)
+    search_fields = ('=titletranslation__text', '=recommender__titletranslation__text',)
 
 class Collector(models.Model):
     name = models.CharField(max_length=100)
@@ -492,10 +545,58 @@ class LinkInline(admin.TabularInline):
     readonly_fields = ("posted",)
 
 
-class Post(models.Model):
+class PrePopulatedPost(models.Model):
     title = models.CharField(max_length=100)
-    content = models.TextField()
-    posted = models.DateField(default=datetime.date.today)
+    published = models.BooleanField()
+    slug = models.SlugField()
+
+class PrePopulatedSubPost(models.Model):
+    post = models.ForeignKey(PrePopulatedPost)
+    subtitle = models.CharField(max_length=100)
+    subslug = models.SlugField()
+
+class SubPostInline(admin.TabularInline):
+    model = PrePopulatedSubPost
+
+    prepopulated_fields = {
+        'subslug' : ('subtitle',)
+    }
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj and obj.published:
+            return ('subslug',)
+        return self.readonly_fields
+
+    def get_prepopulated_fields(self, request, obj=None):
+        if obj and obj.published:
+            return {}
+        return self.prepopulated_fields
+
+class PrePopulatedPostAdmin(admin.ModelAdmin):
+    list_display = ['title', 'slug']
+    prepopulated_fields = {
+        'slug' : ('title',)
+    }
+
+    inlines = [SubPostInline]
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj and obj.published:
+            return ('slug',)
+        return self.readonly_fields
+
+    def get_prepopulated_fields(self, request, obj=None):
+        if obj and obj.published:
+            return {}
+        return self.prepopulated_fields
+
+class Post(models.Model):
+    title = models.CharField(max_length=100, help_text="Some help text for the title (with unicode ŠĐĆŽćžšđ)")
+    content = models.TextField(help_text="Some help text for the content (with unicode ŠĐĆŽćžšđ)")
+    posted = models.DateField(
+            default=datetime.date.today,
+            help_text="Some help text for the date (with unicode ŠĐĆŽćžšđ)"
+    )
     public = models.NullBooleanField()
 
     def awesomeness_level(self):
@@ -526,7 +627,7 @@ class Gadget(models.Model):
         return self.name
 
 class CustomChangeList(ChangeList):
-    def get_query_set(self):
+    def get_query_set(self, request):
         return self.root_query_set.filter(pk=9999) # Does not exist
 
 class GadgetAdmin(admin.ModelAdmin):
@@ -615,12 +716,133 @@ class Album(models.Model):
 class AlbumAdmin(admin.ModelAdmin):
     list_filter = ['title']
 
+class Employee(Person):
+    code = models.CharField(max_length=20)
+
+class WorkHour(models.Model):
+    datum = models.DateField()
+    employee = models.ForeignKey(Employee)
+
+class WorkHourAdmin(admin.ModelAdmin):
+    list_display = ('datum', 'employee')
+    list_filter = ('employee',)
+
+class Question(models.Model):
+    question = models.CharField(max_length=20)
+
+class Answer(models.Model):
+    question = models.ForeignKey(Question, on_delete=models.PROTECT)
+    answer = models.CharField(max_length=20)
+
+    def __unicode__(self):
+        return self.answer
+
+class Reservation(models.Model):
+    start_date = models.DateTimeField()
+    price = models.IntegerField()
+
+
+DRIVER_CHOICES = (
+    (u'bill', 'Bill G'),
+    (u'steve', 'Steve J'),
+)
+
+RESTAURANT_CHOICES = (
+    (u'indian', u'A Taste of India'),
+    (u'thai', u'Thai Pography'),
+    (u'pizza', u'Pizza Mama'),
+)
+
+class FoodDelivery(models.Model):
+    reference = models.CharField(max_length=100)
+    driver = models.CharField(max_length=100, choices=DRIVER_CHOICES, blank=True)
+    restaurant = models.CharField(max_length=100, choices=RESTAURANT_CHOICES, blank=True)
+
+    class Meta:
+        unique_together = (("driver", "restaurant"),)
+
+class FoodDeliveryAdmin(admin.ModelAdmin):
+    list_display=('reference', 'driver', 'restaurant')
+    list_editable = ('driver', 'restaurant')
+
+class Paper(models.Model):
+    title = models.CharField(max_length=30)
+    author = models.CharField(max_length=30, blank=True, null=True)
+
+class CoverLetter(models.Model):
+    author = models.CharField(max_length=30)
+    date_written = models.DateField(null=True, blank=True)
+
+    def __unicode__(self):
+        return self.author
+
+class PaperAdmin(admin.ModelAdmin):
+    """
+    A ModelAdin with a custom queryset() method that uses only(), to test
+    verbose_name display in messages shown after adding Paper instances.
+    """
+
+    def queryset(self, request):
+        return super(PaperAdmin, self).queryset(request).only('title')
+
+class CoverLetterAdmin(admin.ModelAdmin):
+    """
+    A ModelAdin with a custom queryset() method that uses only(), to test
+    verbose_name display in messages shown after adding CoverLetter instances.
+    Note that the CoverLetter model defines a __unicode__ method.
+    """
+
+    def queryset(self, request):
+        return super(CoverLetterAdmin, self).queryset(request).defer('date_written')
+
+class Story(models.Model):
+    title = models.CharField(max_length=100)
+    content = models.TextField()
+
+class StoryForm(forms.ModelForm):
+    class Meta:
+        widgets = {'title': forms.HiddenInput}
+
+class StoryAdmin(admin.ModelAdmin):
+    list_display = ('id', 'title', 'content')
+    list_display_links = ('title',) # 'id' not in list_display_links
+    list_editable = ('content', )
+    form = StoryForm
+    ordering = ["-pk"]
+
+class OtherStory(models.Model):
+    title = models.CharField(max_length=100)
+    content = models.TextField()
+
+class OtherStoryAdmin(admin.ModelAdmin):
+    list_display = ('id', 'title', 'content')
+    list_display_links = ('title', 'id') # 'id' in list_display_links
+    list_editable = ('content', )
+    ordering = ["-pk"]
+
+class ComplexSortedPerson(models.Model):
+    name = models.CharField(max_length=100)
+    age = models.PositiveIntegerField()
+    is_employee = models.NullBooleanField()
+
+class ComplexSortedPersonAdmin(admin.ModelAdmin):
+    list_display = ('name', 'age', 'is_employee', 'colored_name')
+    ordering = ('name',)
+
+    def colored_name(self, obj):
+        return '<span style="color: #%s;">%s</span>' % ('ff00ff', obj.name)
+    colored_name.allow_tags = True
+    colored_name.admin_order_field = 'name'
+
 admin.site.register(Article, ArticleAdmin)
 admin.site.register(CustomArticle, CustomArticleAdmin)
 admin.site.register(Section, save_as=True, inlines=[ArticleInline])
 admin.site.register(ModelWithStringPrimaryKey)
 admin.site.register(Color)
 admin.site.register(Thing, ThingAdmin)
+admin.site.register(Actor)
+admin.site.register(Inquisition, InquisitionAdmin)
+admin.site.register(Sketch, SketchAdmin)
 admin.site.register(Person, PersonAdmin)
 admin.site.register(Persona, PersonaAdmin)
 admin.site.register(Subscriber, SubscriberAdmin)
@@ -646,6 +868,14 @@ admin.site.register(Plot)
 admin.site.register(PlotDetails)
 admin.site.register(CyclicOne)
 admin.site.register(CyclicTwo)
+admin.site.register(WorkHour, WorkHourAdmin)
+admin.site.register(Reservation)
+admin.site.register(FoodDelivery, FoodDeliveryAdmin)
+admin.site.register(RowLevelChangePermissionModel, RowLevelChangePermissionModelAdmin)
+admin.site.register(Paper, PaperAdmin)
+admin.site.register(CoverLetter, CoverLetterAdmin)
+admin.site.register(Story, StoryAdmin)
+admin.site.register(OtherStory, OtherStoryAdmin)
 
 # We intentionally register Promo and ChapterXtra1 but not Chapter nor ChapterXtra2.
 # That way we cover all four cases:
@@ -662,3 +892,7 @@ admin.site.register(ChapterXtra1, ChapterXtra1Admin)
 admin.site.register(Pizza, PizzaAdmin)
 admin.site.register(Topping)
 admin.site.register(Album, AlbumAdmin)
+admin.site.register(Question)
+admin.site.register(Answer)
+admin.site.register(PrePopulatedPost, PrePopulatedPostAdmin)
+admin.site.register(ComplexSortedPerson, ComplexSortedPersonAdmin)

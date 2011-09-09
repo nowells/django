@@ -57,7 +57,7 @@ App names
 ---------
 
 Many commands take a list of "app names." An "app name" is the basename of
-the package containing your models. For example, if your ``INSTALLED_APPS``
+the package containing your models. For example, if your :setting:`INSTALLED_APPS`
 contains the string ``'mysite.blog'``, the app name is ``blog``.
 
 Determining the version
@@ -126,7 +126,7 @@ dbshell
 
 Runs the command-line client for the database engine specified in your
 ``ENGINE`` setting, with the connection parameters specified in your
-``USER``, ``PASSWORD``, etc., settings.
+:setting:`USER`, :setting:`PASSWORD`, etc., settings.
 
     * For PostgreSQL, this runs the ``psql`` command-line client.
     * For MySQL, this runs the ``mysql`` command-line client.
@@ -151,8 +151,9 @@ Displays differences between the current settings file and Django's default
 settings.
 
 Settings that don't appear in the defaults are followed by ``"###"``. For
-example, the default settings don't define ``ROOT_URLCONF``, so
-``ROOT_URLCONF`` is followed by ``"###"`` in the output of ``diffsettings``.
+example, the default settings don't define :setting:`ROOT_URLCONF`, so
+:setting:`ROOT_URLCONF` is followed by ``"###"`` in the output of
+``diffsettings``.
 
 Note that Django's default settings live in ``django/conf/global_settings.py``,
 if you're ever curious to see the full list of defaults.
@@ -245,7 +246,7 @@ inspectdb
 .. django-admin:: inspectdb
 
 Introspects the database tables in the database pointed-to by the
-``NAME`` setting and outputs a Django model module (a ``models.py``
+:setting:`NAME` setting and outputs a Django model module (a ``models.py``
 file) to standard output.
 
 Use this if you have a legacy database with which you'd like to use Django.
@@ -309,7 +310,7 @@ fixture can be distributed over multiple directories, in multiple applications.
 Django will search in three locations for fixtures:
 
    1. In the ``fixtures`` directory of every installed application
-   2. In any directory named in the ``FIXTURE_DIRS`` setting
+   2. In any directory named in the :setting:`FIXTURE_DIRS` setting
    3. In the literal path named by the fixture
 
 Django will load any and all fixtures it finds in these locations that match
@@ -340,7 +341,7 @@ directories will be included in the search path. For example::
 
 would search ``<appname>/fixtures/foo/bar/mydata.json`` for each installed
 application,  ``<dirname>/foo/bar/mydata.json`` for each directory in
-``FIXTURE_DIRS``, and the literal path ``foo/bar/mydata.json``.
+:setting:`FIXTURE_DIRS`, and the literal path ``foo/bar/mydata.json``.
 
 When fixture files are processed, the data is saved to the database as is.
 Model defined ``save`` methods and ``pre_save`` signals are not called.
@@ -383,14 +384,14 @@ installation will be aborted, and any data installed in the call to
 Database-specific fixtures
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-If you are in a multi-database setup, you may have fixture data that
+If you're in a multi-database setup, you might have fixture data that
 you want to load onto one database, but not onto another. In this
-situation, you can add database identifier into . If your
-:setting:`DATABASES` setting has a 'master' database defined, you can
-define the fixture ``mydata.master.json`` or
-``mydata.master.json.gz``. This fixture will only be loaded if you
-have specified that you want to load data onto the ``master``
-database.
+situation, you can add database identifier into the names of your fixtures.
+
+For example, if your :setting:`DATABASES` setting has a 'master' database
+defined, name the fixture ``mydata.master.json`` or
+``mydata.master.json.gz`` and the fixture will only be loaded when you
+specify you want to load data into the ``master`` database.
 
 makemessages
 ------------
@@ -416,7 +417,7 @@ Example usage::
 .. django-admin-option:: --extension
 
 Use the ``--extension`` or ``-e`` option to specify a list of file extensions
-to examine (default: ".html").
+to examine (default: ".html", ".txt").
 
 Example usage::
 
@@ -437,7 +438,7 @@ Example usage::
 Use the ``--domain`` or ``-d`` option to change the domain of the messages files.
 Currently supported:
 
-    * ``django`` for all ``*.py`` and ``*.html`` files (default)
+    * ``django`` for all ``*.py``, ``*.html`` and ``*.txt`` files (default)
     * ``djangojs`` for ``*.js`` files
 
 .. django-admin-option:: --symlinks
@@ -454,15 +455,13 @@ Example usage::
 .. django-admin-option:: --ignore
 
 Use the ``--ignore`` or ``-i`` option to ignore files or directories matching
-the given `glob-style pattern`_. Use multiple times to ignore more.
+the given :mod:`glob`-style pattern. Use multiple times to ignore more.
 
 These patterns are used by default: ``'CVS'``, ``'.*'``, ``'*~'``
 
 Example usage::
 
     django-admin.py makemessages --locale=en_US --ignore=apps/* --ignore=secret/*.html
-
-.. _`glob-style pattern`: http://docs.python.org/library/glob.html
 
 .. django-admin-option:: --no-default-ignore
 
@@ -616,8 +615,8 @@ Example usage::
 
 Run a FastCGI server as a daemon and write the spawned PID in a file.
 
-runserver [port or ipaddr:port]
--------------------------------
+runserver [port or address:port]
+--------------------------------
 
 .. django-admin:: runserver
 
@@ -653,8 +652,10 @@ machines on the network, use its own IP address (e.g. ``192.168.2.1``) or
 
 .. versionchanged:: 1.3
 
-You can also provide an IPv6 address surrounded by brackets
-(eg. ``[200a::1]:8000``). This will automaticaly enable IPv6 support.
+You can provide an IPv6 address surrounded by brackets
+(e.g. ``[200a::1]:8000``). This will automatically enable IPv6 support.
+
+A hostname containing ASCII-only characters can also be used.
 
 .. django-admin-option:: --adminmedia
 
@@ -667,6 +668,13 @@ Example usage::
 
     django-admin.py runserver --adminmedia=/tmp/new-admin-style/
 
+.. versionchanged:: 1.3
+
+If the :doc:`staticfiles</ref/contrib/staticfiles>` contrib app is enabled
+(default in new projects) the :djadmin:`runserver` command will be overriden
+with an own :djadmin:`runserver<staticfiles-runserver>` command which doesn't
+have the :djadminopt:`--adminmedia` option due to deprecation.
+
 .. django-admin-option:: --noreload
 
 Use the ``--noreload`` option to disable the use of the auto-reloader. This
@@ -677,6 +685,13 @@ memory.
 Example usage::
 
     django-admin.py runserver --noreload
+
+.. django-admin-option:: --nothreading
+
+.. versionadded:: 1.4
+
+Use the ``--nothreading`` option to disable the use of threading in the
+development server.
 
 .. django-admin-option:: --ipv6, -6
 
@@ -721,11 +736,19 @@ Port 7000 on IPv6 address ``2001:0db8:1234:5678::9``::
 
     django-admin.py runserver [2001:0db8:1234:5678::9]:7000
 
+Port 8000 on IPv4 address of host ``localhost``::
+
+    django-admin.py runserver localhost:8000
+
+Port 8000 on IPv6 address of host ``localhost``::
+
+    django-admin.py runserver -6 localhost:8000
+
 Serving static files with the development server
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 By default, the development server doesn't serve any static files for your site
-(such as CSS files, images, things under ``MEDIA_URL`` and so forth). If
+(such as CSS files, images, things under :setting:`MEDIA_URL` and so forth). If
 you want to configure Django to serve static media, read :doc:`/howto/static-files`.
 
 shell
@@ -895,13 +918,13 @@ syncdb
 
 .. django-admin:: syncdb
 
-Creates the database tables for all apps in ``INSTALLED_APPS`` whose tables
-have not already been created.
+Creates the database tables for all apps in :setting:`INSTALLED_APPS` whose
+tables have not already been created.
 
 Use this command when you've added new applications to your project and want to
 install them in the database. This includes any apps shipped with Django that
-might be in ``INSTALLED_APPS`` by default. When you start a new project, run
-this command to install the default apps.
+might be in :setting:`INSTALLED_APPS` by default. When you start a new project,
+run this command to install the default apps.
 
 .. admonition:: Syncdb will not alter existing tables
 
@@ -945,6 +968,13 @@ information.
 
 Use the :djadminopt:`--failfast` option to stop running tests and report the failure
 immediately after a test fails.
+
+.. versionadded:: 1.4
+.. django-admin-option:: --testrunner
+
+The :djadminopt:`--testrunner` option can be used to control the test runner
+class that is used to execute tests. If this value is provided, it overrides
+the value provided by the :setting:`TEST_RUNNER` setting.
 
 testserver <fixture fixture ...>
 --------------------------------
@@ -1015,8 +1045,8 @@ validate
 
 .. django-admin:: validate
 
-Validates all installed models (according to the ``INSTALLED_APPS`` setting)
-and prints validation errors to standard output.
+Validates all installed models (according to the :setting:`INSTALLED_APPS`
+setting) and prints validation errors to standard output.
 
 Commands provided by applications
 =================================
@@ -1069,7 +1099,7 @@ a password has been manually set for it.
 .. django-admin-option:: --username
 .. django-admin-option:: --email
 
-The username and e-mail address for the new account can be supplied by
+The username and email address for the new account can be supplied by
 using the ``--username`` and ``--email`` arguments on the command
 line. If either of those is not supplied, ``createsuperuser`` will prompt for
 it when running interactively.
@@ -1181,8 +1211,8 @@ that ``django-admin.py`` should print to the console.
 Common options
 ==============
 
-The following options are not available on every commands, but they are
-common to a number of commands.
+The following options are not available on every command, but they are common
+to a number of commands.
 
 .. django-admin-option:: --database
 
@@ -1288,7 +1318,7 @@ display options:
     * ``reverse``
     * ``conceal``
 
-A color specification follows one of the the following patterns:
+A color specification follows one of the following patterns:
 
     * ``role=fg``
     * ``role=fg/bg``

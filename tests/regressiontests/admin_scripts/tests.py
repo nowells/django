@@ -37,8 +37,7 @@ class AdminScriptTestCase(unittest.TestCase):
         if apps is None:
             apps = ['django.contrib.auth', 'django.contrib.contenttypes', 'admin_scripts']
 
-        if apps:
-            settings_file.write("INSTALLED_APPS = %s\n" % apps)
+        settings_file.write("INSTALLED_APPS = %s\n" % apps)
 
         if sdict:
             for k, v in sdict.items():
@@ -108,20 +107,23 @@ class AdminScriptTestCase(unittest.TestCase):
         # Build the command line
         executable = sys.executable
         arg_string = ' '.join(['%s' % arg for arg in args])
+        # Silence the DeprecationWarning caused by having a locale directory
+        # in the project directory.
         if ' ' in executable:
-            cmd = '""%s" "%s" %s"' % (executable, script, arg_string)
+            cmd = '""%s" -Wignore:::django.utils.translation "%s" %s"' % (executable, script, arg_string)
         else:
-            cmd = '%s "%s" %s' % (executable, script, arg_string)
+            cmd = '%s -Wignore:::django.utils.translation "%s" %s' % (executable, script, arg_string)
 
         # Move to the test directory and run
         os.chdir(test_dir)
         try:
             from subprocess import Popen, PIPE
+        except ImportError:
+            stdin, stdout, stderr = os.popen3(cmd)
+        else:
             p = Popen(cmd, shell=True, stdin=PIPE, stdout=PIPE, stderr=PIPE)
             stdin, stdout, stderr = (p.stdin, p.stdout, p.stderr)
             p.wait()
-        except ImportError:
-            stdin, stdout, stderr = os.popen3(cmd)
         out, err = stdout.read(), stderr.read()
 
         # Restore the old environment
@@ -155,7 +157,18 @@ class AdminScriptTestCase(unittest.TestCase):
 
     def assertNoOutput(self, stream):
         "Utility assertion: assert that the given stream is empty"
-        self.assertEquals(len(stream), 0, "Stream should be empty: actually contains '%s'" % stream)
+        # HACK: Under Windows, ignore warnings of the form:
+        # 'warning: Not loading directory '...\tests\regressiontests\locale': missing __init__.py'
+        # It has been impossible to filter them out using other means like:
+        # * Using warning.filterwarnings() (for the Python interpreter running the
+        #   tests) and/or
+        # * Using -Wignore:... (for the python interpreter spawned in self.run_test())
+        # Instead use a strategy copied from Mercurial's setup.py
+        if sys.platform == 'win32':
+            stream = [e for e in stream.splitlines()
+                if not e.startswith('warning: Not importing directory')]
+        self.assertEqual(len(stream), 0, "Stream should be empty: actually contains '%s'" % stream)
+
     def assertOutput(self, stream, msg):
         "Utility assertion: assert that the given message exists in the output"
         self.assertTrue(msg in stream, "'%s' does not match actual output text '%s'" % (msg, stream))
@@ -543,10 +556,11 @@ class DjangoAdminSettingsDirectory(AdminScriptTestCase):
         "directory: startapp creates the correct directory"
         test_dir = os.path.dirname(os.path.dirname(__file__))
         args = ['startapp','settings_test']
+        app_path = os.path.join(test_dir, 'settings_test')
         out, err = self.run_django_admin(args,'settings')
+        self.addCleanup(shutil.rmtree, app_path)
         self.assertNoOutput(err)
-        self.assert_(os.path.exists(os.path.join(test_dir, 'settings_test')))
-        shutil.rmtree(os.path.join(test_dir, 'settings_test'))
+        self.assertTrue(os.path.exists(app_path))
 
     def test_builtin_command(self):
         "directory: django-admin builtin commands fail with an import error when no settings provided"
@@ -663,8 +677,8 @@ class ManageDefaultSettings(AdminScriptTestCase):
         "default: manage.py builtin commands fail if settings file (from environment) doesn't exist"
         args = ['sqlall','admin_scripts']
         out, err = self.run_manage(args,'bad_settings')
-        self.assertNoOutput(err)
-        self.assertOutput(out, 'CREATE TABLE')
+        self.assertNoOutput(out)
+        self.assertOutput(err, "Could not import settings 'bad_settings'")
 
     def test_custom_command(self):
         "default: manage.py can execute user commands when default settings are appropriate"
@@ -730,8 +744,8 @@ class ManageFullPathDefaultSettings(AdminScriptTestCase):
         "fulldefault: manage.py builtin commands fail if settings file (from environment) doesn't exist"
         args = ['sqlall','admin_scripts']
         out, err = self.run_manage(args,'bad_settings')
-        self.assertNoOutput(err)
-        self.assertOutput(out, 'CREATE TABLE')
+        self.assertNoOutput(out)
+        self.assertOutput(err, "Could not import settings 'bad_settings'")
 
     def test_custom_command(self):
         "fulldefault: manage.py can execute user commands when default settings are appropriate"
@@ -797,7 +811,7 @@ class ManageMinimalSettings(AdminScriptTestCase):
         args = ['sqlall','admin_scripts']
         out, err = self.run_manage(args,'bad_settings')
         self.assertNoOutput(out)
-        self.assertOutput(err, 'App with label admin_scripts could not be found')
+        self.assertOutput(err, "Could not import settings 'bad_settings'")
 
     def test_custom_command(self):
         "minimal: manage.py can't execute user commands without appropriate settings"
@@ -916,12 +930,11 @@ class ManageMultipleSettings(AdminScriptTestCase):
         self.assertOutput(out, 'CREATE TABLE')
 
     def test_builtin_with_environment(self):
-        "multiple: manage.py builtin commands fail if settings are provided in the environment"
-        # FIXME: This doesn't seem to be the correct output.
+        "multiple: manage.py can execute builtin commands if settings are provided in the environment"
         args = ['sqlall','admin_scripts']
         out, err = self.run_manage(args,'alternate_settings')
-        self.assertNoOutput(out)
-        self.assertOutput(err, 'App with label admin_scripts could not be found.')
+        self.assertNoOutput(err)
+        self.assertOutput(out, 'CREATE TABLE')
 
     def test_builtin_with_bad_settings(self):
         "multiple: manage.py builtin commands fail if settings file (from argument) doesn't exist"
@@ -935,7 +948,7 @@ class ManageMultipleSettings(AdminScriptTestCase):
         args = ['sqlall','admin_scripts']
         out, err = self.run_manage(args,'bad_settings')
         self.assertNoOutput(out)
-        self.assertOutput(err, "App with label admin_scripts could not be found")
+        self.assertOutput(err, "Could not import settings 'bad_settings'")
 
     def test_custom_command(self):
         "multiple: manage.py can't execute user commands using default settings"
@@ -955,9 +968,38 @@ class ManageMultipleSettings(AdminScriptTestCase):
         "multiple: manage.py can execute user commands if settings are provided in environment"
         args = ['noargs_command']
         out, err = self.run_manage(args,'alternate_settings')
-        self.assertNoOutput(out)
-        self.assertOutput(err, "Unknown command: 'noargs_command'")
+        self.assertNoOutput(err)
+        self.assertOutput(out, "EXECUTE:NoArgsCommand")
 
+class ManageSettingsWithImportError(AdminScriptTestCase):
+    """Tests for manage.py when using the default settings.py file
+    with an import error. Ticket #14130.
+    """
+    def setUp(self):
+        self.write_settings_with_import_error('settings.py')
+
+    def tearDown(self):
+        self.remove_settings('settings.py')
+
+    def write_settings_with_import_error(self, filename, apps=None, is_dir=False, sdict=None):
+        test_dir = os.path.dirname(os.path.dirname(__file__))
+        if is_dir:
+            settings_dir = os.path.join(test_dir,filename)
+            os.mkdir(settings_dir)
+            settings_file = open(os.path.join(settings_dir,'__init__.py'), 'w')
+        else:
+            settings_file = open(os.path.join(test_dir, filename), 'w')
+        settings_file.write('# Settings file automatically generated by regressiontests.admin_scripts test case\n')
+        settings_file.write('# The next line will cause an import error:\nimport foo42bar\n')
+
+        settings_file.close()
+
+    def test_builtin_command(self):
+        "import error: manage.py builtin commands shows useful diagnostic info when settings with import errors is provided"
+        args = ['sqlall','admin_scripts']
+        out, err = self.run_manage(args)
+        self.assertNoOutput(out)
+        self.assertOutput(err, "ImportError: No module named foo42bar")
 
 class ManageValidate(AdminScriptTestCase):
     def tearDown(self):
@@ -992,12 +1034,71 @@ class ManageValidate(AdminScriptTestCase):
     def test_app_with_import(self):
         "manage.py validate does not raise errors when an app imports a base class that itself has an abstract base"
         self.write_settings('settings.py',
-            apps=['admin_scripts.app_with_import', 'django.contrib.comments'],
+            apps=['admin_scripts.app_with_import',
+                  'django.contrib.comments',
+                  'django.contrib.auth',
+                  'django.contrib.contenttypes',
+                  'django.contrib.sites'],
             sdict={'DEBUG': True})
         args = ['validate']
         out, err = self.run_manage(args)
         self.assertNoOutput(err)
         self.assertOutput(out, '0 errors found')
+
+class ManageRunserver(AdminScriptTestCase):
+    def setUp(self):
+        from django.core.management.commands.runserver import BaseRunserverCommand
+        def monkey_run(*args, **options): return
+
+        self.cmd = BaseRunserverCommand()
+        self.cmd.run = monkey_run
+
+    def assertServerSettings(self, addr, port, ipv6=None, raw_ipv6=False):
+        self.assertEqual(self.cmd.addr, addr)
+        self.assertEqual(self.cmd.port, port)
+        self.assertEqual(self.cmd.use_ipv6, ipv6)
+        self.assertEqual(self.cmd._raw_ipv6, raw_ipv6)
+
+    def test_runserver_addrport(self):
+        self.cmd.handle()
+        self.assertServerSettings('127.0.0.1', '8000')
+
+        self.cmd.handle(addrport="1.2.3.4:8000")
+        self.assertServerSettings('1.2.3.4', '8000')
+
+        self.cmd.handle(addrport="7000")
+        self.assertServerSettings('127.0.0.1', '7000')
+
+        # IPv6
+        self.cmd.handle(addrport="", use_ipv6=True)
+        self.assertServerSettings('::1', '8000', ipv6=True, raw_ipv6=True)
+
+        self.cmd.handle(addrport="7000", use_ipv6=True)
+        self.assertServerSettings('::1', '7000', ipv6=True, raw_ipv6=True)
+
+        self.cmd.handle(addrport="[2001:0db8:1234:5678::9]:7000")
+        self.assertServerSettings('2001:0db8:1234:5678::9', '7000', ipv6=True, raw_ipv6=True)
+
+        # Hostname
+        self.cmd.handle(addrport="localhost:8000")
+        self.assertServerSettings('localhost', '8000')
+
+        self.cmd.handle(addrport="test.domain.local:7000")
+        self.assertServerSettings('test.domain.local', '7000')
+
+        self.cmd.handle(addrport="test.domain.local:7000", use_ipv6=True)
+        self.assertServerSettings('test.domain.local', '7000', ipv6=True)
+
+        # Potentially ambiguous
+
+        # Only 4 characters, all of which could be in an ipv6 address
+        self.cmd.handle(addrport="beef:7654")
+        self.assertServerSettings('beef', '7654')
+
+        # Uses only characters that could be in an ipv6 address
+        self.cmd.handle(addrport="deadbeef:7654")
+        self.assertServerSettings('deadbeef', '7654')
+
 
 ##########################################################################
 # COMMAND PROCESSING TESTS
@@ -1025,11 +1126,15 @@ class CommandTypes(AdminScriptTestCase):
         "--help is handled as a special case"
         args = ['--help']
         out, err = self.run_manage(args)
-        if sys.version_info < (2, 5):
-            self.assertOutput(out, "usage: manage.py subcommand [options] [args]")
-        else:
-            self.assertOutput(out, "Usage: manage.py subcommand [options] [args]")
-        self.assertOutput(err, "Type 'manage.py help <subcommand>' for help on a specific subcommand.")
+        self.assertOutput(out, "Usage: manage.py subcommand [options] [args]")
+        self.assertOutput(out, "Type 'manage.py help <subcommand>' for help on a specific subcommand.")
+
+    def test_short_help(self):
+        "-h is handled as a short form of --help"
+        args = ['-h']
+        out, err = self.run_manage(args)
+        self.assertOutput(out, "Usage: manage.py subcommand [options] [args]")
+        self.assertOutput(out, "Type 'manage.py help <subcommand>' for help on a specific subcommand.")
 
     def test_specific_help(self):
         "--help can be used on a specific command"

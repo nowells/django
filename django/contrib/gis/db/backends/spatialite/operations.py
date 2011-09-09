@@ -90,7 +90,7 @@ class SpatiaLiteOperations(DatabaseOperations, BaseSpatialOperations):
         'contains' : SpatiaLiteFunction('Contains'),
         'intersects' : SpatiaLiteFunction('Intersects'),
         'relate' : (SpatiaLiteRelate, basestring),
-        # Retruns true if B's bounding box completely contains A's bounding box.
+        # Returns true if B's bounding box completely contains A's bounding box.
         'contained' : SpatiaLiteFunction('MbrWithin'),
         # Returns true if A's bounding box completely contains B's bounding box.
         'bbcontains' : SpatiaLiteFunction('MbrContains'),
@@ -110,8 +110,7 @@ class SpatiaLiteOperations(DatabaseOperations, BaseSpatialOperations):
     geometry_functions.update(distance_functions)
 
     def __init__(self, connection):
-        super(DatabaseOperations, self).__init__()
-        self.connection = connection
+        super(DatabaseOperations, self).__init__(connection)
 
         # Determine the version of the SpatiaLite library.
         try:

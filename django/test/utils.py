@@ -1,16 +1,21 @@
-import sys
-import time
-import os
-import warnings
-from django.conf import settings
-from django.core import mail
-from django.core.mail.backends import locmem
-from django.test import signals
-from django.template import Template
-from django.utils.translation import deactivate
+from __future__ import with_statement
 
-__all__ = ('Approximate', 'ContextList', 'setup_test_environment',
-       'teardown_test_environment', 'get_runner')
+import warnings
+from django.conf import settings, UserSettingsHolder
+from django.core import mail
+from django.test.signals import template_rendered, setting_changed
+from django.template import Template, loader, TemplateDoesNotExist
+from django.template.loaders import cached
+from django.utils.translation import deactivate
+from django.utils.functional import wraps
+
+
+__all__ = (
+    'Approximate', 'ContextList',  'get_runner', 'override_settings',
+    'setup_test_environment', 'teardown_test_environment',
+)
+
+RESTORE_LOADERS_ATTR = '_original_template_source_loaders'
 
 
 class Approximate(object):
@@ -53,7 +58,7 @@ def instrumented_test_render(self, context):
     An instrumented Template render method, providing a signal
     that can be intercepted by the test system Client
     """
-    signals.template_rendered.send(sender=self, template=self, context=context)
+    template_rendered.send(sender=self, template=self, context=context)
     return self.nodelist.render(context)
 
 
@@ -66,9 +71,6 @@ def setup_test_environment():
     """
     Template.original_render = Template._render
     Template._render = instrumented_test_render
-
-    mail.original_SMTPConnection = mail.SMTPConnection
-    mail.SMTPConnection = locmem.EmailBackend
 
     mail.original_email_backend = settings.EMAIL_BACKEND
     settings.EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
@@ -87,9 +89,6 @@ def teardown_test_environment():
     """
     Template._render = Template.original_render
     del Template.original_render
-
-    mail.SMTPConnection = mail.original_SMTPConnection
-    del mail.original_SMTPConnection
 
     settings.EMAIL_BACKEND = mail.original_email_backend
     del mail.original_email_backend
@@ -115,8 +114,11 @@ def restore_warnings_state(state):
     warnings.filters = state[:]
 
 
-def get_runner(settings):
-    test_path = settings.TEST_RUNNER.split('.')
+def get_runner(settings, test_runner_class=None):
+    if not test_runner_class:
+        test_runner_class = settings.TEST_RUNNER
+
+    test_path = test_runner_class.split('.')
     # Allow for Python 2.5 relative paths
     if len(test_path) > 1:
         test_module_name = '.'.join(test_path[:-1])
@@ -125,3 +127,104 @@ def get_runner(settings):
     test_module = __import__(test_module_name, {}, {}, test_path[-1])
     test_runner = getattr(test_module, test_path[-1])
     return test_runner
+
+
+def setup_test_template_loader(templates_dict, use_cached_loader=False):
+    """
+    Changes Django to only find templates from within a dictionary (where each
+    key is the template name and each value is the corresponding template
+    content to return).
+
+    Use meth:`restore_template_loaders` to restore the original loaders.
+    """
+    if hasattr(loader, RESTORE_LOADERS_ATTR):
+        raise Exception("loader.%s already exists" % RESTORE_LOADERS_ATTR)
+
+    def test_template_loader(template_name, template_dirs=None):
+        "A custom template loader that loads templates from a dictionary."
+        try:
+            return (templates_dict[template_name], "test:%s" % template_name)
+        except KeyError:
+            raise TemplateDoesNotExist(template_name)
+
+    if use_cached_loader:
+        template_loader = cached.Loader(('test_template_loader',))
+        template_loader._cached_loaders = (test_template_loader,)
+    else:
+        template_loader = test_template_loader
+
+    setattr(loader, RESTORE_LOADERS_ATTR, loader.template_source_loaders)
+    loader.template_source_loaders = (template_loader,)
+    return template_loader
+
+
+def restore_template_loaders():
+    """
+    Restores the original template loaders after
+    :meth:`setup_test_template_loader` has been run.
+    """
+    loader.template_source_loaders = getattr(loader, RESTORE_LOADERS_ATTR)
+    delattr(loader, RESTORE_LOADERS_ATTR)
+
+
+class OverrideSettingsHolder(UserSettingsHolder):
+    """
+    A custom setting holder that sends a signal upon change.
+    """
+    def __setattr__(self, name, value):
+        UserSettingsHolder.__setattr__(self, name, value)
+        setting_changed.send(sender=self.__class__, setting=name, value=value)
+
+
+class override_settings(object):
+    """
+    Acts as either a decorator, or a context manager. If it's a decorator it
+    takes a function and returns a wrapped function. If it's a contextmanager
+    it's used with the ``with`` statement. In either event entering/exiting
+    are called before and after, respectively, the function/block is executed.
+    """
+    def __init__(self, **kwargs):
+        self.options = kwargs
+        self.wrapped = settings._wrapped
+
+    def __enter__(self):
+        self.enable()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.disable()
+
+    def __call__(self, test_func):
+        from django.test import TransactionTestCase
+        if isinstance(test_func, type) and issubclass(test_func, TransactionTestCase):
+            # When decorating a class, we need to construct a new class
+            # with the same name so that the test discovery tools can
+            # get a useful name.
+            def _pre_setup(innerself):
+                self.enable()
+                test_func._pre_setup(innerself)
+            def _post_teardown(innerself):
+                test_func._post_teardown(innerself)
+                self.disable()
+            inner = type(
+                test_func.__name__,
+                (test_func,),
+                {
+                    '_pre_setup': _pre_setup,
+                    '_post_teardown': _post_teardown,
+                    '__module__': test_func.__module__,
+                })
+        else:
+            @wraps(test_func)
+            def inner(*args, **kwargs):
+                with self:
+                    return test_func(*args, **kwargs)
+        return inner
+
+    def enable(self):
+        override = OverrideSettingsHolder(settings._wrapped)
+        for key, new_value in self.options.items():
+            setattr(override, key, new_value)
+        settings._wrapped = override
+
+    def disable(self):
+        settings._wrapped = self.wrapped

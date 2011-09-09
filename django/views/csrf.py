@@ -6,8 +6,8 @@ from django.conf import settings
 # this error message, especially for the sake of developers, and there isn't any
 # other way of making it available independent of what is in the settings file.
 
-CSRF_FAILRE_TEMPLATE = """
-<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+CSRF_FAILURE_TEMPLATE = """
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta http-equiv="content-type" content="text/html; charset=utf-8">
@@ -94,7 +94,7 @@ def csrf_failure(request, reason=""):
     Default view used when request fails CSRF protection
     """
     from django.middleware.csrf import REASON_NO_REFERER
-    t = Template(CSRF_FAILRE_TEMPLATE)
+    t = Template(CSRF_FAILURE_TEMPLATE)
     c = Context({'DEBUG': settings.DEBUG,
                  'reason': reason,
                  'no_referer': reason == REASON_NO_REFERER

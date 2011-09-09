@@ -1,3 +1,6 @@
+from __future__ import with_statement
+import os
+from django.core import mail
 from django.contrib.auth.models import User
 from django.contrib.auth.forms import UserCreationForm, AuthenticationForm,  PasswordChangeForm, SetPasswordForm, UserChangeForm, PasswordResetForm
 from django.test import TestCase
@@ -219,6 +222,15 @@ class PasswordResetFormTest(TestCase):
 
     fixtures = ['authtestdata.json']
 
+    def create_dummy_user(self):
+        """creates a user and returns a tuple
+        (user_object, username, email)
+        """
+        username = 'jsmith'
+        email = 'jsmith@example.com'
+        user = User.objects.create_user(username, email, 'test123')
+        return (user, username, email)
+
     def test_invalid_email(self):
         data = {'email':'not valid'}
         form = PasswordResetForm(data)
@@ -236,12 +248,24 @@ class PasswordResetFormTest(TestCase):
 
     def test_cleaned_data(self):
         # Regression test
-        user = User.objects.create_user("jsmith3", "jsmith3@example.com", "test123")
-        data = {'email':'jsmith3@example.com'}
+        (user, username, email) = self.create_dummy_user()
+        data = {'email': email}
         form = PasswordResetForm(data)
         self.assertTrue(form.is_valid())
-        self.assertEqual(form.cleaned_data['email'], u'jsmith3@example.com')
+        self.assertEqual(form.cleaned_data['email'], email)
 
+    def test_custom_email_subject(self):
+        template_path = os.path.join(os.path.dirname(__file__), 'templates')
+        with self.settings(TEMPLATE_DIRS=(template_path,)):
+            data = {'email': 'testclient@example.com'}
+            form = PasswordResetForm(data)
+            self.assertTrue(form.is_valid())
+            # Since we're not providing a request object, we must provide a
+            # domain_override to prevent the save operation from failing in the
+            # potential case where contrib.sites is not installed. Refs #16412.
+            form.save(domain_override='example.com')
+            self.assertEqual(len(mail.outbox), 1)
+            self.assertEqual(mail.outbox[0].subject, u'Custom password reset on example.com')
 
     def test_bug_5605(self):
         # bug #5605, preserve the case of the user name (before the @ in the
@@ -250,3 +274,25 @@ class PasswordResetFormTest(TestCase):
         self.assertEqual(user.email, 'tesT@example.com')
         user = User.objects.create_user('forms_test3', 'tesT', 'test')
         self.assertEqual(user.email, 'tesT')
+
+    def test_inactive_user(self):
+        #tests that inactive user cannot
+        #receive password reset email
+        (user, username, email) = self.create_dummy_user()
+        user.is_active = False
+        user.save()
+        form = PasswordResetForm({'email': email})
+        self.assertFalse(form.is_valid())
+
+
+    def test_unusable_password(self):
+        user = User.objects.create_user('testuser', 'test@example.com', 'test')
+        data = {"email": "test@example.com"}
+        form = PasswordResetForm(data)
+        self.assertTrue(form.is_valid())
+        user.set_unusable_password()
+        user.save()
+        form = PasswordResetForm(data)
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form["email"].errors,
+                         [u"The user account associated with this e-mail address cannot reset the password."])

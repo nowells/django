@@ -94,6 +94,8 @@ class BadExceptionMiddleware(TestMiddleware):
 
 
 class BaseMiddlewareExceptionTest(TestCase):
+    urls = 'regressiontests.middleware_exceptions.urls'
+
     def setUp(self):
         self.exceptions = []
         got_request_exception.connect(self._on_request_exception)
@@ -125,10 +127,10 @@ class BaseMiddlewareExceptionTest(TestCase):
         except Exception, e:
             if type(extra_error) != type(e):
                 self.fail("Unexpected exception: %s" % e)
-        self.assertEquals(len(self.exceptions), len(errors))
+        self.assertEqual(len(self.exceptions), len(errors))
         for i, error in enumerate(errors):
             exception, value, tb = self.exceptions[i]
-            self.assertEquals(value.args, (error, ))
+            self.assertEqual(value.args, (error, ))
 
     def assert_middleware_usage(self, middleware, request, view, template_response, response, exception):
         self.assertEqual(middleware.process_request_called, request)
@@ -503,9 +505,9 @@ class BadMiddlewareTests(BaseMiddlewareExceptionTest):
         self.assert_exceptions_handled('/middleware_exceptions/template_response/', ['Test Template Response Exception'])
 
         # Check that the right middleware methods have been invoked
-        self.assert_middleware_usage(pre_middleware,  True, True, False, False, False)
-        self.assert_middleware_usage(bad_middleware,  True, True, True,  False, False)
-        self.assert_middleware_usage(post_middleware, True, True, True,  False, False)
+        self.assert_middleware_usage(pre_middleware,  True, True, False, True, False)
+        self.assert_middleware_usage(bad_middleware,  True, True, True,  True, False)
+        self.assert_middleware_usage(post_middleware, True, True, True,  True, False)
 
     def test_process_response_bad_middleware(self):
         pre_middleware = TestMiddleware()
@@ -768,6 +770,8 @@ class BadMiddlewareTests(BaseMiddlewareExceptionTest):
 
 _missing = object()
 class RootUrlconfTests(TestCase):
+    urls = 'regressiontests.middleware_exceptions.urls'
+
     def test_missing_root_urlconf(self):
         try:
             original_ROOT_URLCONF = settings.ROOT_URLCONF

@@ -17,48 +17,104 @@ except ImportError:
         # Python 2.6 and greater
         from urlparse import parse_qsl
     except ImportError:
-        # Python 2.5, 2.4.  Works on Python 2.6 but raises
-        # PendingDeprecationWarning
+        # Python 2.5.  Works on Python 2.6 but raises PendingDeprecationWarning
         from cgi import parse_qsl
 
-# httponly support exists in Python 2.6's Cookie library,
-# but not in Python 2.4 or 2.5.
 import Cookie
-if Cookie.Morsel._reserved.has_key('httponly'):
+# httponly support exists in Python 2.6's Cookie library,
+# but not in Python 2.5.
+_morsel_supports_httponly = Cookie.Morsel._reserved.has_key('httponly')
+# Some versions of Python 2.7 and later won't need this encoding bug fix:
+_cookie_encodes_correctly = Cookie.SimpleCookie().value_encode(';') == (';', '"\\073"')
+# See ticket #13007, http://bugs.python.org/issue2193 and http://trac.edgewall.org/ticket/2256
+_tc = Cookie.SimpleCookie()
+try:
+    _tc.load('foo:bar=1')
+    _cookie_allows_colon_in_names = True
+except Cookie.CookieError:
+    _cookie_allows_colon_in_names = False
+
+if _morsel_supports_httponly and _cookie_encodes_correctly and _cookie_allows_colon_in_names:
     SimpleCookie = Cookie.SimpleCookie
 else:
-    class Morsel(Cookie.Morsel):
-        def __setitem__(self, K, V):
-            K = K.lower()
-            if K == "httponly":
-                if V:
-                    # The superclass rejects httponly as a key,
-                    # so we jump to the grandparent.
-                    super(Cookie.Morsel, self).__setitem__(K, V)
-            else:
-                super(Morsel, self).__setitem__(K, V)
+    if not _morsel_supports_httponly:
+        class Morsel(Cookie.Morsel):
+            def __setitem__(self, K, V):
+                K = K.lower()
+                if K == "httponly":
+                    if V:
+                        # The superclass rejects httponly as a key,
+                        # so we jump to the grandparent.
+                        super(Cookie.Morsel, self).__setitem__(K, V)
+                else:
+                    super(Morsel, self).__setitem__(K, V)
 
-        def OutputString(self, attrs=None):
-            output = super(Morsel, self).OutputString(attrs)
-            if "httponly" in self:
-                output += "; httponly"
-            return output
+            def OutputString(self, attrs=None):
+                output = super(Morsel, self).OutputString(attrs)
+                if "httponly" in self:
+                    output += "; httponly"
+                return output
+    else:
+        Morsel = Cookie.Morsel
 
     class SimpleCookie(Cookie.SimpleCookie):
-        def __set(self, key, real_value, coded_value):
-            M = self.get(key, Morsel())
-            M.set(key, real_value, coded_value)
-            dict.__setitem__(self, key, M)
+        if not _cookie_encodes_correctly:
+            def value_encode(self, val):
+                # Some browsers do not support quoted-string from RFC 2109,
+                # including some versions of Safari and Internet Explorer.
+                # These browsers split on ';', and some versions of Safari
+                # are known to split on ', '. Therefore, we encode ';' and ','
 
-        def __setitem__(self, key, value):
-            rval, cval = self.value_encode(value)
-            self.__set(key, rval, cval)
+                # SimpleCookie already does the hard work of encoding and decoding.
+                # It uses octal sequences like '\\012' for newline etc.
+                # and non-ASCII chars.  We just make use of this mechanism, to
+                # avoid introducing two encoding schemes which would be confusing
+                # and especially awkward for javascript.
+
+                # NB, contrary to Python docs, value_encode returns a tuple containing
+                # (real val, encoded_val)
+                val, encoded = super(SimpleCookie, self).value_encode(val)
+
+                encoded = encoded.replace(";", "\\073").replace(",","\\054")
+                # If encoded now contains any quoted chars, we need double quotes
+                # around the whole string.
+                if "\\" in encoded and not encoded.startswith('"'):
+                    encoded = '"' + encoded + '"'
+
+                return val, encoded
+
+        if not _cookie_allows_colon_in_names or not _morsel_supports_httponly:
+            def load(self, rawdata):
+                self.bad_cookies = set()
+                super(SimpleCookie, self).load(rawdata)
+                for key in self.bad_cookies:
+                    del self[key]
+
+            # override private __set() method:
+            # (needed for using our Morsel, and for laxness with CookieError
+            def _BaseCookie__set(self, key, real_value, coded_value):
+                try:
+                    M = self.get(key, Morsel())
+                    M.set(key, real_value, coded_value)
+                    dict.__setitem__(self, key, M)
+                except Cookie.CookieError:
+                    self.bad_cookies.add(key)
+                    dict.__setitem__(self, key, Cookie.Morsel())
+
+
+class CompatCookie(SimpleCookie):
+    def __init__(self, *args, **kwargs):
+        super(CompatCookie, self).__init__(*args, **kwargs)
+        import warnings
+        warnings.warn("CompatCookie is deprecated, use django.http.SimpleCookie instead.",
+                      DeprecationWarning)
 
 from django.utils.datastructures import MultiValueDict, ImmutableList
 from django.utils.encoding import smart_str, iri_to_uri, force_unicode
 from django.utils.http import cookie_date
 from django.http.multipartparser import MultiPartParser
 from django.conf import settings
+from django.core import signing
 from django.core.files import uploadhandler
 from utils import *
 
@@ -68,6 +124,55 @@ absolute_http_url_re = re.compile(r"^https?://", re.I)
 
 class Http404(Exception):
     pass
+
+RAISE_ERROR = object()
+
+
+def build_request_repr(request, path_override=None, GET_override=None,
+                       POST_override=None, COOKIES_override=None,
+                       META_override=None):
+    """
+    Builds and returns the request's representation string. The request's
+    attributes may be overridden by pre-processed values.
+    """
+    # Since this is called as part of error handling, we need to be very
+    # robust against potentially malformed input.
+    try:
+        get = (pformat(GET_override)
+               if GET_override is not None
+               else pformat(request.GET))
+    except:
+        get = '<could not parse>'
+    if request._post_parse_error:
+        post = '<could not parse>'
+    else:
+        try:
+            post = (pformat(POST_override)
+                    if POST_override is not None
+                    else pformat(request.POST))
+        except:
+            post = '<could not parse>'
+    try:
+        cookies = (pformat(COOKIES_override)
+                   if COOKIES_override is not None
+                   else pformat(request.COOKIES))
+    except:
+        cookies = '<could not parse>'
+    try:
+        meta = (pformat(META_override)
+                if META_override is not None
+                else pformat(request.META))
+    except:
+        meta = '<could not parse>'
+    path = path_override if path_override is not None else request.path
+    return smart_str(u'<%s\npath:%s,\nGET:%s,\nPOST:%s,\nCOOKIES:%s,\nMETA:%s>' %
+                     (request.__class__.__name__,
+                      path,
+                      unicode(get),
+                      unicode(post),
+                      unicode(cookies),
+                      unicode(meta)))
+
 
 class HttpRequest(object):
     """A basic HTTP request."""
@@ -81,11 +186,10 @@ class HttpRequest(object):
         self.path = ''
         self.path_info = ''
         self.method = None
+        self._post_parse_error = False
 
     def __repr__(self):
-        return '<HttpRequest\nGET:%s,\nPOST:%s,\nCOOKIES:%s,\nMETA:%s>' % \
-            (pformat(self.GET), pformat(self.POST), pformat(self.COOKIES),
-            pformat(self.META))
+        return build_request_repr(self)
 
     def get_host(self):
         """Returns the HTTP host using the environment or request headers."""
@@ -103,7 +207,32 @@ class HttpRequest(object):
         return host
 
     def get_full_path(self):
-        return ''
+        # RFC 3986 requires query string arguments to be in the ASCII range.
+        # Rather than crash if this doesn't happen, we encode defensively.
+        return '%s%s' % (self.path, self.META.get('QUERY_STRING', '') and ('?' + iri_to_uri(self.META.get('QUERY_STRING', ''))) or '')
+
+    def get_signed_cookie(self, key, default=RAISE_ERROR, salt='', max_age=None):
+        """
+        Attempts to return a signed cookie. If the signature fails or the
+        cookie has expired, raises an exception... unless you provide the
+        default argument in which case that value will be returned instead.
+        """
+        try:
+            cookie_value = self.COOKIES[key].encode('utf-8')
+        except KeyError:
+            if default is not RAISE_ERROR:
+                return default
+            else:
+                raise
+        try:
+            value = signing.get_cookie_signer(salt=key + salt).unsign(
+                cookie_value, max_age=max_age)
+        except signing.BadSignature:
+            if default is not RAISE_ERROR:
+                return default
+            else:
+                raise
+        return value
 
     def build_absolute_uri(self, location=None):
         """
@@ -153,7 +282,7 @@ class HttpRequest(object):
 
     def _get_upload_handlers(self):
         if not self._upload_handlers:
-            # If thre are no upload handlers defined, initialize them from settings.
+            # If there are no upload handlers defined, initialize them from settings.
             self._initialize_handlers()
         return self._upload_handlers
 
@@ -172,17 +301,7 @@ class HttpRequest(object):
         if not hasattr(self, '_raw_post_data'):
             if self._read_started:
                 raise Exception("You cannot access raw_post_data after reading from request's data stream")
-            try:
-                content_length = int(self.META.get('CONTENT_LENGTH', 0))
-            except (ValueError, TypeError):
-                # If CONTENT_LENGTH was empty string or not an integer, don't
-                # error out. We've also seen None passed in here (against all
-                # specs, but see ticket #8259), so we handle TypeError as well.
-                content_length = 0
-            if content_length:
-                self._raw_post_data = self.read(content_length)
-            else:
-                self._raw_post_data = self.read()
+            self._raw_post_data = self.read()
             self._stream = StringIO(self._raw_post_data)
         return self._raw_post_data
     raw_post_data = property(_get_raw_post_data)
@@ -197,14 +316,18 @@ class HttpRequest(object):
         if self.method != 'POST':
             self._post, self._files = QueryDict('', encoding=self._encoding), MultiValueDict()
             return
-        if self._read_started:
+        if self._read_started and not hasattr(self, '_raw_post_data'):
             self._mark_post_parse_error()
             return
 
         if self.META.get('CONTENT_TYPE', '').startswith('multipart'):
-            self._raw_post_data = ''
+            if hasattr(self, '_raw_post_data'):
+                # Use already read data
+                data = StringIO(self._raw_post_data)
+            else:
+                data = self
             try:
-                self._post, self._files = self.parse_file_upload(self.META, self)
+                self._post, self._files = self.parse_file_upload(self.META, data)
             except:
                 # An error occured while parsing POST data.  Since when
                 # formatting the error the request handler might access
@@ -261,9 +384,6 @@ class QueryDict(MultiValueDict):
     def __init__(self, query_string, mutable=False, encoding=None):
         MultiValueDict.__init__(self)
         if not encoding:
-            # *Important*: do not import settings any earlier because of note
-            # in core.handlers.modpython.
-            from django.conf import settings
             encoding = settings.DEFAULT_CHARSET
         self.encoding = encoding
         for key, value in parse_qsl((query_string or ''), True): # keep_blank_values=True
@@ -273,9 +393,6 @@ class QueryDict(MultiValueDict):
 
     def _get_encoding(self):
         if self._encoding is None:
-            # *Important*: do not import settings at the module level because
-            # of the note in core.handlers.modpython.
-            from django.conf import settings
             self._encoding = settings.DEFAULT_CHARSET
         return self._encoding
 
@@ -305,7 +422,7 @@ class QueryDict(MultiValueDict):
         return result
 
     def __deepcopy__(self, memo):
-        import django.utils.copycompat as copy
+        import copy
         result = self.__class__('', mutable=True, encoding=self.encoding)
         memo[id(self)] = result
         for key, value in dict.items(self):
@@ -389,40 +506,12 @@ class QueryDict(MultiValueDict):
                            for v in list_])
         return '&'.join(output)
 
-class CompatCookie(SimpleCookie):
-    """
-    Cookie class that handles some issues with browser compatibility.
-    """
-    def value_encode(self, val):
-        # Some browsers do not support quoted-string from RFC 2109,
-        # including some versions of Safari and Internet Explorer.
-        # These browsers split on ';', and some versions of Safari
-        # are known to split on ', '. Therefore, we encode ';' and ','
-
-        # SimpleCookie already does the hard work of encoding and decoding.
-        # It uses octal sequences like '\\012' for newline etc.
-        # and non-ASCII chars.  We just make use of this mechanism, to
-        # avoid introducing two encoding schemes which would be confusing
-        # and especially awkward for javascript.
-
-        # NB, contrary to Python docs, value_encode returns a tuple containing
-        # (real val, encoded_val)
-        val, encoded = super(CompatCookie, self).value_encode(val)
-
-        encoded = encoded.replace(";", "\\073").replace(",","\\054")
-        # If encoded now contains any quoted chars, we need double quotes
-        # around the whole string.
-        if "\\" in encoded and not encoded.startswith('"'):
-            encoded = '"' + encoded + '"'
-
-        return val, encoded
-
 def parse_cookie(cookie):
     if cookie == '':
         return {}
     if not isinstance(cookie, Cookie.BaseCookie):
         try:
-            c = CompatCookie()
+            c = SimpleCookie()
             c.load(cookie)
         except Cookie.CookieError:
             # Invalid cookie
@@ -460,7 +549,7 @@ class HttpResponse(object):
         else:
             self._container = [content]
             self._is_string = True
-        self.cookies = CompatCookie()
+        self.cookies = SimpleCookie()
         if status:
             self.status_code = status
 
@@ -509,7 +598,7 @@ class HttpResponse(object):
     def items(self):
         return self._headers.values()
 
-    def get(self, header, alternate):
+    def get(self, header, alternate=None):
         return self._headers.get(header.lower(), (None, alternate))[1]
 
     def set_cookie(self, key, value='', max_age=None, expires=None, path='/',
@@ -548,6 +637,10 @@ class HttpResponse(object):
             self.cookies[key]['secure'] = True
         if httponly:
             self.cookies[key]['httponly'] = True
+
+    def set_signed_cookie(self, key, value, salt='', **kwargs):
+        value = signing.get_cookie_signer(salt=key + salt).sign(value)
+        return self.set_cookie(key, value, **kwargs)
 
     def delete_cookie(self, key, path='/', domain=None):
         self.set_cookie(key, max_age=0, path=path, domain=domain,
@@ -597,14 +690,14 @@ class HttpResponseRedirect(HttpResponse):
     status_code = 302
 
     def __init__(self, redirect_to):
-        HttpResponse.__init__(self)
+        super(HttpResponseRedirect, self).__init__()
         self['Location'] = iri_to_uri(redirect_to)
 
 class HttpResponsePermanentRedirect(HttpResponse):
     status_code = 301
 
     def __init__(self, redirect_to):
-        HttpResponse.__init__(self)
+        super(HttpResponsePermanentRedirect, self).__init__()
         self['Location'] = iri_to_uri(redirect_to)
 
 class HttpResponseNotModified(HttpResponse):
@@ -623,20 +716,14 @@ class HttpResponseNotAllowed(HttpResponse):
     status_code = 405
 
     def __init__(self, permitted_methods):
-        HttpResponse.__init__(self)
+        super(HttpResponseNotAllowed, self).__init__()
         self['Allow'] = ', '.join(permitted_methods)
 
 class HttpResponseGone(HttpResponse):
     status_code = 410
 
-    def __init__(self, *args, **kwargs):
-        HttpResponse.__init__(self, *args, **kwargs)
-
 class HttpResponseServerError(HttpResponse):
     status_code = 500
-
-    def __init__(self, *args, **kwargs):
-        HttpResponse.__init__(self, *args, **kwargs)
 
 # A backwards compatible alias for HttpRequest.get_host.
 def get_host(request):

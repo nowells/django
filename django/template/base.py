@@ -1,15 +1,14 @@
-import imp
 import re
+from functools import partial
 from inspect import getargspec
 
 from django.conf import settings
 from django.template.context import Context, RequestContext, ContextPopException
 from django.utils.importlib import import_module
 from django.utils.itercompat import is_iterable
-from django.utils.functional import curry, Promise
 from django.utils.text import smart_split, unescape_string_literal, get_text_list
 from django.utils.encoding import smart_unicode, force_unicode, smart_str
-from django.utils.translation import ugettext as _
+from django.utils.translation import ugettext_lazy
 from django.utils.safestring import SafeData, EscapeData, mark_safe, mark_for_escaping
 from django.utils.formats import localize
 from django.utils.html import escape
@@ -655,7 +654,7 @@ class Variable(object):
             # We're dealing with a literal, so it's already been "resolved"
             value = self.literal
         if self.translate:
-            return _(value)
+            return ugettext_lazy(value)
         return value
 
     def __repr__(self):
@@ -691,7 +690,9 @@ class Variable(object):
                                 ):
                             raise VariableDoesNotExist("Failed lookup for key [%s] in %r", (bit, current)) # missing attribute
                 if callable(current):
-                    if getattr(current, 'alters_data', False):
+                    if getattr(current, 'do_not_call_in_templates', False):
+                        pass
+                    elif getattr(current, 'alters_data', False):
                         current = settings.TEMPLATE_STRING_IF_INVALID
                     else:
                         try: # method call (assuming no args required)
@@ -820,7 +821,7 @@ class Library(object):
             # @register.tag()
             return self.tag_function
         elif name != None and compile_function == None:
-            if(callable(name)):
+            if callable(name):
                 # @register.tag
                 return self.tag_function(name)
             else:
@@ -844,7 +845,7 @@ class Library(object):
             # @register.filter()
             return self.filter_function
         elif filter_func == None:
-            if(callable(name)):
+            if callable(name):
                 # @register.filter
                 return self.filter_function(name)
             else:
@@ -863,7 +864,7 @@ class Library(object):
         self.filters[getattr(func, "_decorated_function", func).__name__] = func
         return func
 
-    def simple_tag(self, func=None, takes_context=None):
+    def simple_tag(self, func=None, takes_context=None, name=None):
         def dec(func):
             params, xx, xxx, defaults = getargspec(func)
             if takes_context:
@@ -884,9 +885,10 @@ class Library(object):
                         func_args = resolved_vars
                     return func(*func_args)
 
-            compile_func = curry(generic_tag_compiler, params, defaults, getattr(func, "_decorated_function", func).__name__, SimpleNode)
+            function_name = name or getattr(func, '_decorated_function', func).__name__
+            compile_func = partial(generic_tag_compiler, params, defaults, function_name, SimpleNode)
             compile_func.__doc__ = func.__doc__
-            self.tag(getattr(func, "_decorated_function", func).__name__, compile_func)
+            self.tag(function_name, compile_func)
             return func
 
         if func is None:
@@ -898,7 +900,68 @@ class Library(object):
         else:
             raise TemplateSyntaxError("Invalid arguments provided to simple_tag")
 
-    def inclusion_tag(self, file_name, context_class=Context, takes_context=False):
+    def assignment_tag(self, func=None, takes_context=None, name=None):
+        def dec(func):
+            params, xx, xxx, defaults = getargspec(func)
+            if takes_context:
+                if params[0] == 'context':
+                    params = params[1:]
+                else:
+                    raise TemplateSyntaxError("Any tag function decorated with takes_context=True must have a first argument of 'context'")
+
+            class AssignmentNode(Node):
+                def __init__(self, params_vars, target_var):
+                    self.params_vars = map(Variable, params_vars)
+                    self.target_var = target_var
+
+                def render(self, context):
+                    resolved_vars = [var.resolve(context) for var in self.params_vars]
+                    if takes_context:
+                        func_args = [context] + resolved_vars
+                    else:
+                        func_args = resolved_vars
+                    context[self.target_var] = func(*func_args)
+                    return ''
+
+            def compile_func(parser, token):
+                bits = token.split_contents()
+                tag_name = bits[0]
+                bits = bits[1:]
+                params_max = len(params)
+                defaults_length = defaults and len(defaults) or 0
+                params_min = params_max - defaults_length
+                if (len(bits) < 2 or bits[-2] != 'as'):
+                    raise TemplateSyntaxError(
+                        "'%s' tag takes at least 2 arguments and the "
+                        "second last argument must be 'as'" % tag_name)
+                params_vars = bits[:-2]
+                target_var = bits[-1]
+                if (len(params_vars) < params_min or
+                        len(params_vars) > params_max):
+                    if params_min == params_max:
+                        raise TemplateSyntaxError(
+                            "%s takes %s arguments" % (tag_name, params_min))
+                    else:
+                        raise TemplateSyntaxError(
+                            "%s takes between %s and %s arguments"
+                            % (tag_name, params_min, params_max))
+                return AssignmentNode(params_vars, target_var)
+
+            function_name = name or getattr(func, '_decorated_function', func).__name__
+            compile_func.__doc__ = func.__doc__
+            self.tag(function_name, compile_func)
+            return func
+
+        if func is None:
+            # @register.assignment_tag(...)
+            return dec
+        elif callable(func):
+            # @register.assignment_tag
+            return dec(func)
+        else:
+            raise TemplateSyntaxError("Invalid arguments provided to assignment_tag")
+
+    def inclusion_tag(self, file_name, context_class=Context, takes_context=False, name=None):
         def dec(func):
             params, xx, xxx, defaults = getargspec(func)
             if takes_context:
@@ -922,12 +985,18 @@ class Library(object):
 
                     if not getattr(self, 'nodelist', False):
                         from django.template.loader import get_template, select_template
-                        if not isinstance(file_name, basestring) and is_iterable(file_name):
+                        if isinstance(file_name, Template):
+                            t = file_name
+                        elif not isinstance(file_name, basestring) and is_iterable(file_name):
                             t = select_template(file_name)
                         else:
                             t = get_template(file_name)
                         self.nodelist = t.nodelist
-                    new_context = context_class(dict, autoescape=context.autoescape)
+                    new_context = context_class(dict, **{
+                        'autoescape': context.autoescape,
+                        'current_app': context.current_app,
+                        'use_l10n': context.use_l10n,
+                    })
                     # Copy across the CSRF token, if present, because inclusion
                     # tags are often used for forms, and we need instructions
                     # for using CSRF protection to be as simple as possible.
@@ -936,9 +1005,10 @@ class Library(object):
                         new_context['csrf_token'] = csrf_token
                     return self.nodelist.render(new_context)
 
-            compile_func = curry(generic_tag_compiler, params, defaults, getattr(func, "_decorated_function", func).__name__, InclusionNode)
+            function_name = name or getattr(func, '_decorated_function', func).__name__
+            compile_func = partial(generic_tag_compiler, params, defaults, function_name, InclusionNode)
             compile_func.__doc__ = func.__doc__
-            self.tag(getattr(func, "_decorated_function", func).__name__, compile_func)
+            self.tag(function_name, compile_func)
             return func
         return dec
 

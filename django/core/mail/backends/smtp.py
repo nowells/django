@@ -1,5 +1,4 @@
 """SMTP email backend class."""
-
 import smtplib
 import socket
 import threading
@@ -7,6 +6,8 @@ import threading
 from django.conf import settings
 from django.core.mail.backends.base import BaseEmailBackend
 from django.core.mail.utils import DNS_NAME
+from django.core.mail.message import sanitize_address
+
 
 class EmailBackend(BaseEmailBackend):
     """
@@ -17,8 +18,14 @@ class EmailBackend(BaseEmailBackend):
         super(EmailBackend, self).__init__(fail_silently=fail_silently)
         self.host = host or settings.EMAIL_HOST
         self.port = port or settings.EMAIL_PORT
-        self.username = username or settings.EMAIL_HOST_USER
-        self.password = password or settings.EMAIL_HOST_PASSWORD
+        if username is None:
+            self.username = settings.EMAIL_HOST_USER
+        else:
+            self.username = username
+        if password is None:
+            self.password = settings.EMAIL_HOST_PASSWORD
+        else:
+            self.password = password
         if use_tls is None:
             self.use_tls = settings.EMAIL_USE_TLS
         else:
@@ -91,17 +98,13 @@ class EmailBackend(BaseEmailBackend):
             self._lock.release()
         return num_sent
 
-    def _sanitize(self, email):
-        name, domain = email.split('@', 1)
-        email = '@'.join([name, domain.encode('idna')])
-        return email
-
     def _send(self, email_message):
         """A helper method that does the actual sending."""
         if not email_message.recipients():
             return False
-        from_email = self._sanitize(email_message.from_email)
-        recipients = map(self._sanitize, email_message.recipients())
+        from_email = sanitize_address(email_message.from_email, email_message.encoding)
+        recipients = [sanitize_address(addr, email_message.encoding)
+                      for addr in email_message.recipients()]
         try:
             self.connection.sendmail(from_email, recipients,
                     email_message.message().as_string())

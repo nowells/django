@@ -1,9 +1,11 @@
 import re
+import urllib2
 import urlparse
 
 from django.core.exceptions import ValidationError
 from django.utils.translation import ugettext_lazy as _
 from django.utils.encoding import smart_unicode
+from django.utils.ipv6 import is_valid_ipv6_address
 
 # These values, if given to validate(), will trigger the self.required check.
 EMPTY_VALUES = (None, '', [], (), {})
@@ -28,8 +30,9 @@ class RegexValidator(object):
         if code is not None:
             self.code = code
 
+        # Compile the regex if it was not passed pre-compiled.
         if isinstance(self.regex, basestring):
-            self.regex = re.compile(regex)
+            self.regex = re.compile(self.regex)
 
     def __call__(self, value):
         """
@@ -38,10 +41,14 @@ class RegexValidator(object):
         if not self.regex.search(smart_unicode(value)):
             raise ValidationError(self.message, code=self.code)
 
+class HeadRequest(urllib2.Request):
+    def get_method(self):
+        return "HEAD"
+
 class URLValidator(RegexValidator):
     regex = re.compile(
-        r'^https?://' # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|' #domain...
+        r'^(?:http|ftp)s?://' # http:// or https://
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|' #domain...
         r'localhost|' #localhost...
         r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})' # ...or ip
         r'(?::\d+)?' # optional port
@@ -72,7 +79,6 @@ class URLValidator(RegexValidator):
             url = value
 
         if self.verify_exists:
-            import urllib2
             headers = {
                 "Accept": "text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5",
                 "Accept-Language": "en-us,en;q=0.5",
@@ -80,13 +86,27 @@ class URLValidator(RegexValidator):
                 "Connection": "close",
                 "User-Agent": self.user_agent,
             }
+            url = url.encode('utf-8')
+            broken_error = ValidationError(
+                _(u'This URL appears to be a broken link.'), code='invalid_link')
             try:
-                req = urllib2.Request(url, None, headers)
+                req = HeadRequest(url, None, headers)
                 u = urllib2.urlopen(req)
             except ValueError:
                 raise ValidationError(_(u'Enter a valid URL.'), code='invalid')
+            except urllib2.HTTPError, e:
+                if e.code in (405, 501):
+                    # Try a GET request (HEAD refused)
+                    # See also: http://www.w3.org/Protocols/rfc2616/rfc2616.html
+                    try:
+                        req = urllib2.Request(url, None, headers)
+                        u = urllib2.urlopen(req)
+                    except:
+                        raise broken_error
+                else:
+                    raise broken_error
             except: # urllib2.URLError, httplib.InvalidURL, etc.
-                raise ValidationError(_(u'This URL appears to be a broken link.'), code='invalid_link')
+                raise broken_error
 
 
 def validate_integer(value):
@@ -116,7 +136,8 @@ class EmailValidator(RegexValidator):
 email_re = re.compile(
     r"(^[-!#$%&'*+/=?^_`{}|~0-9A-Z]+(\.[-!#$%&'*+/=?^_`{}|~0-9A-Z]+)*"  # dot-atom
     r'|^"([\001-\010\013\014\016-\037!#-\[\]-\177]|\\[\001-011\013\014\016-\177])*"' # quoted-string
-    r')@(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?$', re.IGNORECASE)  # domain
+    r')@((?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?$)'  # domain
+    r'|\[(25[0-5]|2[0-4]\d|[0-1]?\d?\d)(\.(25[0-5]|2[0-4]\d|[0-1]?\d?\d)){3}\]$', re.IGNORECASE)  # literal form, ipv4 address (SMTP 4.1.3)
 validate_email = EmailValidator(email_re, _(u'Enter a valid e-mail address.'), 'invalid')
 
 slug_re = re.compile(r'^[-\w]+$')
@@ -124,6 +145,41 @@ validate_slug = RegexValidator(slug_re, _(u"Enter a valid 'slug' consisting of l
 
 ipv4_re = re.compile(r'^(25[0-5]|2[0-4]\d|[0-1]?\d?\d)(\.(25[0-5]|2[0-4]\d|[0-1]?\d?\d)){3}$')
 validate_ipv4_address = RegexValidator(ipv4_re, _(u'Enter a valid IPv4 address.'), 'invalid')
+
+def validate_ipv6_address(value):
+    if not is_valid_ipv6_address(value):
+        raise ValidationError(_(u'Enter a valid IPv6 address.'), code='invalid')
+
+def validate_ipv46_address(value):
+    try:
+        validate_ipv4_address(value)
+    except ValidationError:
+        try:
+            validate_ipv6_address(value)
+        except ValidationError:
+            raise ValidationError(_(u'Enter a valid IPv4 or IPv6 address.'), code='invalid')
+
+ip_address_validator_map = {
+    'both': ([validate_ipv46_address], _('Enter a valid IPv4 or IPv6 address.')),
+    'ipv4': ([validate_ipv4_address], _('Enter a valid IPv4 address.')),
+    'ipv6': ([validate_ipv6_address], _('Enter a valid IPv6 address.')),
+}
+
+def ip_address_validators(protocol, unpack_ipv4):
+    """
+    Depending on the given parameters returns the appropriate validators for
+    the GenericIPAddressField.
+
+    This code is here, because it is exactly the same for the model and the form field.
+    """
+    if protocol != 'both' and unpack_ipv4:
+        raise ValueError(
+            "You can only use `unpack_ipv4` if `protocol` is set to 'both'")
+    try:
+        return ip_address_validator_map[protocol.lower()]
+    except KeyError:
+        raise ValueError("The protocol '%s' is unknown. Supported: %s"
+                         % (protocol, ip_address_validator_map.keys()))
 
 comma_separated_int_list_re = re.compile('^[\d,]+$')
 validate_comma_separated_integer_list = RegexValidator(comma_separated_int_list_re, _(u'Enter only digits separated by commas.'), 'invalid')

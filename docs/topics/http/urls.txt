@@ -28,6 +28,12 @@ This mapping can be as short or as long as needed. It can reference other
 mappings. And, because it's pure Python code, it can be constructed
 dynamically.
 
+.. versionadded:: 1.4
+
+    Django also allows to translate URLs according to the active language.
+    This process is described in the
+    :ref:`internationalization docs <url-internationalization>`.
+
 .. _how-django-processes-a-request:
 
 How Django processes a request
@@ -768,14 +774,16 @@ following would happen:
 Utility methods
 ===============
 
+.. currentmodule:: django.core.urlresolvers
+
 reverse()
 ---------
 
 If you need to use something similar to the :ttag:`url` template tag in
 your code, Django provides the following method (in the
-``django.core.urlresolvers`` module):
+:mod:`django.core.urlresolvers` module):
 
-.. function:: reverse(viewname, urlconf=None, args=None, kwargs=None, current_app=None)
+.. function:: reverse(viewname, [urlconf=None, args=None, kwargs=None, current_app=None])
 
 ``viewname`` is either the function name (either a function reference, or the
 string version of the name, if you used that form in ``urlpatterns``) or the
@@ -815,6 +823,38 @@ namespaces into URLs on specific application instances, according to the
     Make sure that any views you reference in your URLconf files exist and can
     be imported correctly. Do not include lines that reference views you
     haven't written yet, because those views will not be importable.
+
+.. note::
+
+    The string returned by :meth:`~django.core.urlresolvers.reverse` is already
+    :ref:`urlquoted <uri-and-iri-handling>`. For example::
+
+        >>> reverse('cities', args=[u'Orléans'])
+        '.../Orl%C3%A9ans/'
+
+    Applying further encoding (such as :meth:`~django.utils.http.urlquote` or
+    ``urllib.quote``) to the output of :meth:`~django.core.urlresolvers.reverse`
+    may produce undesirable results.
+
+reverse_lazy()
+--------------
+
+.. versionadded:: 1.4
+
+A lazily evaluated version of `reverse()`_.
+
+It is useful for when you need to use a URL reversal before your project's
+URLConf is loaded. Some common cases where this method is necessary are:
+
+* providing a reversed URL as the ``url`` attribute of a generic class-based
+  view.
+
+* providing a reversed URL to a decorator (such as the ``login_url`` argument
+  for the :func:`django.contrib.auth.decorators.permission_required`
+  decorator).
+
+* providing a reversed URL as a default value for a parameter in a function's
+  signature.
 
 resolve()
 ---------

@@ -5,8 +5,11 @@ Module for abstract serializer/unserializer base classes.
 from StringIO import StringIO
 
 from django.db import models
-from django.utils.encoding import smart_str, smart_unicode
-from django.utils import datetime_safe
+from django.utils.encoding import smart_unicode
+
+class SerializerDoesNotExist(KeyError):
+    """The requested serializer was not found."""
+    pass
 
 class SerializationError(Exception):
     """Something bad happened during serialization."""
@@ -31,9 +34,9 @@ class Serializer(object):
         """
         self.options = options
 
-        self.stream = options.get("stream", StringIO())
-        self.selected_fields = options.get("fields")
-        self.use_natural_keys = options.get("use_natural_keys", False)
+        self.stream = options.pop("stream", StringIO())
+        self.selected_fields = options.pop("fields", None)
+        self.use_natural_keys = options.pop("use_natural_keys", False)
 
         self.start_serialization()
         for obj in queryset:

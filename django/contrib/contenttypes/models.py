@@ -90,7 +90,8 @@ class ContentType(models.Model):
     def model_class(self):
         "Returns the Python model class for this type of content."
         from django.db import models
-        return models.get_model(self.app_label, self.model)
+        return models.get_model(self.app_label, self.model,
+                                only_installed=False)
 
     def get_object_for_this_type(self, **kwargs):
         """
@@ -99,7 +100,7 @@ class ContentType(models.Model):
         method. The ObjectNotExist exception, if thrown, will not be caught,
         so code that calls this method should catch it.
         """
-        return self.model_class()._default_manager.using(self._state.db).get(**kwargs)
+        return self.model_class()._base_manager.using(self._state.db).get(**kwargs)
 
     def natural_key(self):
         return (self.app_label, self.model)

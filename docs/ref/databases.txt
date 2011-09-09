@@ -16,21 +16,9 @@ documentation or reference manuals.
 PostgreSQL notes
 ================
 
-.. versionchanged:: 1.3
+.. versionchanged:: 1.4
 
-Django supports PostgreSQL 8.0 and higher. If you want to use
-:ref:`database-level autocommit <postgresql-autocommit-mode>`, a
-minimum version of PostgreSQL 8.2 is required.
-
-.. admonition:: Improvements in recent PostgreSQL versions
-
-    PostgreSQL 8.0 and 8.1 `will soon reach end-of-life`_; there have
-    also been a number of significant performance improvements added
-    in recent PostgreSQL versions. Although PostgreSQL 8.0 is the minimum
-    supported version, you would be well advised to use a more recent
-    version if at all possible.
-
-.. _will soon reach end-of-life: http://wiki.postgresql.org/wiki/PostgreSQL_Release_Support_Policy
+Django supports PostgreSQL 8.2 and higher.
 
 PostgreSQL 8.2 to 8.2.4
 -----------------------
@@ -151,21 +139,24 @@ The default engine is MyISAM_ [#]_. The main drawback of MyISAM is that it
 doesn't currently support transactions or foreign keys. On the plus side, it's
 currently the only engine that supports full-text indexing and searching.
 
-The InnoDB_ engine is fully transactional and supports foreign key references.
+The InnoDB_ engine is fully transactional and supports foreign key references
+and is probably the best choice at this point in time.
 
-The BDB_ engine, like InnoDB, is also fully transactional and supports foreign
-key references. However, its use seems to be deprecated.
+.. versionchanged:: 1.4
 
-`Other storage engines`_, including SolidDB_ and Falcon_, are on the horizon.
-For now, InnoDB is probably your best choice.
+In previous versions of Django, fixtures with forward references (i.e.
+relations to rows that have not yet been inserted into the database) would fail
+to load when using the InnoDB storage engine. This was due to the fact that InnoDB
+deviates from the SQL standard by checking foreign key constraints immediately
+instead of deferring the check until the transaction is committed. This
+problem has been resolved in Django 1.4. Fixture data is now loaded with foreign key
+checks turned off; foreign key checks are then re-enabled when the data has
+finished loading, at which point the entire table is checked for invalid foreign
+key references and an `IntegrityError` is raised if any are found.
 
-.. _storage engines: http://dev.mysql.com/doc/refman/5.0/en/storage-engines.html
-.. _MyISAM: http://dev.mysql.com/doc/refman/5.0/en/myisam-storage-engine.html
-.. _BDB: http://dev.mysql.com/doc/refman/5.0/en/bdb-storage-engine.html
-.. _InnoDB: http://dev.mysql.com/doc/refman/5.0/en/innodb.html
-.. _Other storage engines: http://dev.mysql.com/doc/refman/5.1/en/storage-engines-other.html
-.. _SolidDB: http://forge.mysql.com/projects/project.php?id=139
-.. _Falcon: http://dev.mysql.com/doc/falcon/en/index.html
+.. _storage engines: http://dev.mysql.com/doc/refman/5.5/en/storage-engines.html
+.. _MyISAM: http://dev.mysql.com/doc/refman/5.5/en/myisam-storage-engine.html
+.. _InnoDB: http://dev.mysql.com/doc/refman/5.5/en/innodb.html
 
 .. [#] Unless this was changed by the packager of your MySQL package. We've
    had reports that the Windows Community Server installer sets up InnoDB as
@@ -255,7 +246,7 @@ MySQLdb 1.2.1p2 or 1.2.2, you should still use ``utf8_collation_ci_swedish``
 table (usually called ``django_session``) and the
 :class:`django.contrib.admin.models.LogEntry` table (usually called
 ``django_admin_log``). Those are the two standard tables that use
-:class:`~django.db.model.TextField` internally.
+:class:`~django.db.models.TextField` internally.
 
 .. _fixed in MySQLdb 1.2.2: http://sourceforge.net/tracker/index.php?func=detail&aid=1495765&group_id=22307&atid=374932
 
@@ -271,8 +262,8 @@ Connection settings are used in this order:
        :setting:`HOST`, :setting:`PORT`
     3. MySQL option files.
 
-In other words, if you set the name of the database in ``OPTIONS``,
-this will take precedence over ``NAME``, which would override
+In other words, if you set the name of the database in :setting:`OPTIONS`,
+this will take precedence over :setting:`NAME`, which would override
 anything in a `MySQL option file`_.
 
 Here's a sample configuration which uses a MySQL option file::
@@ -368,6 +359,13 @@ store a timezone-aware ``time`` or ``datetime`` to a
 :class:`~django.db.models.TimeField` or :class:`~django.db.models.DateTimeField`
 respectively, a ``ValueError`` is raised rather than truncating data.
 
+Row locking with ``QuerySet.select_for_update()``
+-------------------------------------------------
+
+MySQL does not support the ``NOWAIT`` option to the ``SELECT ... FOR UPDATE``
+statement. If ``select_for_update()`` is used with ``nowait=True`` then a
+``DatabaseError`` will be raised.
+
 .. _sqlite-notes:
 
 SQLite notes
@@ -382,14 +380,27 @@ specific to SQLite that you should be aware of.
 
 .. _sqlite-string-matching:
 
-String matching for non-ASCII strings
---------------------------------------
+Substring matching and case sensitivity
+-----------------------------------------
 
-SQLite doesn't support case-insensitive matching for non-ASCII strings. Some
-possible workarounds for this are `documented at sqlite.org`_, but they are
-not utilised by the default SQLite backend in Django. Therefore, if you are
-using the ``iexact`` lookup type in your queryset filters, be aware that it
-will not work as expected for non-ASCII strings.
+For all SQLite versions, there is some slightly counter-intuitive behavior when
+attempting to match some types of strings.  These are triggered when using the
+:lookup:`iexact` or :lookup:`contains` filters in Querysets. The behavior
+splits into two cases:
+
+1. For substring matching, all matches are done case-insensitively. That is a
+filter such as ``filter(name__contains="aa")`` will match a name of ``"Aabb"``.
+
+2. For strings containing characters outside the ASCII range, all exact string
+matches are performed case-sensitively, even when the case-insensitive options
+are passed into the query. So the :lookup:`iexact` filter will behave exactly
+the same as the :lookup:`exact` filter in these cases.
+
+Some possible workarounds for this are `documented at sqlite.org`_, but they
+aren't utilised by the default SQLite backend in Django, as incorporating them
+would be fairly difficult to do robustly. Thus, Django exposes the default
+SQLite behavior and you should be aware of this when doing case-insensitive or
+substring filtering.
 
 .. _documented at sqlite.org: http://www.sqlite.org/faq.html#q18
 
@@ -467,7 +478,7 @@ itself to versions newer than the ones included with your particular Python
 binary distribution, if needed.
 
 "Database is locked" errors
------------------------------------------------
+---------------------------
 
 SQLite is meant to be a lightweight database, and thus can't support a high
 level of concurrency. ``OperationalError: database is locked`` errors indicate
@@ -501,6 +512,22 @@ If you're getting this error, you can solve it by:
 
       This will simply make SQLite wait a bit longer before throwing "database
       is locked" errors; it won't really do anything to solve them.
+
+``QuerySet.select_for_update()`` not supported
+----------------------------------------------
+
+SQLite does not support the ``SELECT ... FOR UPDATE`` syntax. Calling it will
+have no effect.
+
+.. _sqlite-connection-queries:
+
+Parameters not quoted in ``connection.queries``
+-----------------------------------------------
+
+``sqlite3`` does not provide a way to retrieve the SQL after quoting and
+substituting the parameters. Instead, the SQL in ``connection.queries`` is
+rebuilt with a simple string interpolation. It may be incorrect. Make sure
+you add quotes where necessary before copying a query into a SQLite shell.
 
 .. _oracle-notes:
 
@@ -560,7 +587,7 @@ Your Django settings.py file should look something like this for Oracle::
 
 If you don't use a ``tnsnames.ora`` file or a similar naming method that
 recognizes the SID ("xe" in this example), then fill in both
-``HOST`` and ``PORT`` like so::
+:setting:`HOST` and :setting:`PORT` like so::
 
     DATABASES = {
         'default': {
@@ -573,7 +600,7 @@ recognizes the SID ("xe" in this example), then fill in both
         }
     }
 
-You should supply both ``HOST`` and ``PORT``, or leave both
+You should supply both :setting:`HOST` and :setting:`PORT`, or leave both
 as empty strings.
 
 Threaded option
@@ -705,6 +732,7 @@ by 3rd parties that allow you to use other databases with Django:
 * `Microsoft SQL Server 2005`_
 * Firebird_
 * ODBC_
+* ADSDB_
 
 The Django versions and ORM features supported by these unofficial backends
 vary considerably. Queries regarding the specific capabilities of these
@@ -716,3 +744,4 @@ the support channels provided by each 3rd party project.
 .. _Microsoft SQL Server 2005: http://code.google.com/p/django-mssql/
 .. _Firebird: http://code.google.com/p/django-firebird/
 .. _ODBC: http://code.google.com/p/django-pyodbc/
+.. _ADSDB: http://code.google.com/p/adsdb-django/

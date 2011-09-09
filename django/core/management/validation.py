@@ -1,13 +1,7 @@
 import sys
 
-from django.contrib.contenttypes.generic import GenericForeignKey, GenericRelation
 from django.core.management.color import color_style
 from django.utils.itercompat import is_iterable
-
-try:
-    any
-except NameError:
-    from django.utils.itercompat import any
 
 class ModelErrorCollection:
     def __init__(self, outfile=sys.stdout):
@@ -45,6 +39,12 @@ def get_validation_errors(outfile, app=None):
                 e.add(opts, '"%s": You can\'t use "id" as a field name, because each model automatically gets an "id" field if none of the fields have primary_key=True. You need to either remove/rename your "id" field or add primary_key=True to a field.' % f.name)
             if f.name.endswith('_'):
                 e.add(opts, '"%s": Field names cannot end with underscores, because this would lead to ambiguous queryset filters.' % f.name)
+            if (f.primary_key and f.null and
+                    not connection.features.interprets_empty_strings_as_nulls):
+                # We cannot reliably check this for backends like Oracle which
+                # consider NULL and '' to be equal (and thus set up
+                # character-based fields a little differently).
+                e.add(opts, '"%s": Primary key fields cannot have null=True.' % f.name)
             if isinstance(f, models.CharField):
                 try:
                     max_length = int(f.max_length)
@@ -240,12 +240,6 @@ def get_validation_errors(outfile, app=None):
                 e.add(opts, "'%s' specifies an m2m relation through model %s, "
                     "which has not been installed" % (f.name, f.rel.through)
                 )
-            elif isinstance(f, GenericRelation):
-                if not any([isinstance(vfield, GenericForeignKey) for vfield in f.rel.to._meta.virtual_fields]):
-                    e.add(opts, "Model '%s' must have a GenericForeignKey in "
-                        "order to create a GenericRelation that points to it."
-                        % f.rel.to.__name__
-                    )
 
             rel_opts = f.rel.to._meta
             rel_name = RelatedObject(f.rel.to, cls, f).get_accessor_name()

@@ -144,9 +144,6 @@ class BaseFormSet(StrAndUnicode):
             'prefix': self.add_prefix('__prefix__'),
             'empty_permitted': True,
         }
-        if self.is_bound:
-            defaults['data'] = self.data
-            defaults['files'] = self.files
         defaults.update(kwargs)
         form = self.form(**defaults)
         self.add_fields(form, None)
@@ -216,15 +213,14 @@ class BaseFormSet(StrAndUnicode):
                     return (1, 0) # +infinity, larger than any number
                 return (0, k[1])
             self._ordering.sort(key=compare_ordering_key)
-        # Return a list of form.cleaned_data dicts in the order spcified by
+        # Return a list of form.cleaned_data dicts in the order specified by
         # the form data.
         return [self.forms[i[0]] for i in self._ordering]
     ordered_forms = property(_get_ordered_forms)
 
-    #@classmethod
+    @classmethod
     def get_default_prefix(cls):
         return 'form'
-    get_default_prefix = classmethod(get_default_prefix)
 
     def non_form_errors(self):
         """

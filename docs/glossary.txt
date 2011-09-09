@@ -24,11 +24,14 @@ Glossary
         See :doc:`/topics/db/models`.
 
     MTV
-        See :ref:`mtv`.
+        "Model-template-view"; a software pattern, similar in style to MVC, but
+        a better description of the way Django does things.
+
+        See :ref:`the FAQ entry <faq-mtv>`.
 
     MVC
         `Model-view-controller`__; a software pattern. Django :ref:`follows MVC
-        to some extent <mtv>`.
+        to some extent <faq-mtv>`.
 
         __ http://en.wikipedia.org/wiki/Model-view-controller
 
@@ -40,19 +43,10 @@ Glossary
 
     property
         Also known as "managed attributes", and a feature of Python since
-        version 2.2. From `the property documentation`__:
+        version 2.2. This is a neat way to implement attributes whose usage
+        resembles attribute access, but whose implementation uses method calls.
 
-            Properties are a neat way to implement attributes whose usage
-            resembles attribute access, but whose implementation uses method
-            calls. [...] You
-            could only do this by overriding ``__getattr__`` and
-            ``__setattr__``; but overriding ``__setattr__`` slows down all
-            attribute assignments considerably, and overriding ``__getattr__``
-            is always a bit tricky to get right. Properties let you do this
-            painlessly, without having to override ``__getattr__`` or
-            ``__setattr__``.
-
-        __ http://www.python.org/download/releases/2.2/descrintro/#property
+        See :func:`property`.
 
     queryset
         An object representing some set of rows to be fetched from the database.

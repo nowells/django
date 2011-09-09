@@ -7,16 +7,6 @@ def run_tests(*args, **kwargs):
     return base_run_tests(*args, **kwargs)
 
 
-def run_gis_tests(test_labels, verbosity=1, interactive=True, failfast=False, extra_tests=None):
-    import warnings
-    warnings.warn(
-        'The run_gis_tests() test runner has been deprecated in favor of GeoDjangoTestSuiteRunner.',
-        DeprecationWarning
-    )
-    test_runner = GeoDjangoTestSuiteRunner(verbosity=verbosity, interactive=interactive, failfast=failfast)
-    return test_runner.run_tests(test_labels, extra_tests=extra_tests)
-
-
 def geo_apps(namespace=True, runtests=False):
     """
     Returns a list of GeoDjango test applications that reside in
@@ -110,15 +100,16 @@ class GeoDjangoTestSuiteRunner(DjangoTestSuiteRunner):
 
         # Constructing the new INSTALLED_APPS, and including applications
         # within the GeoDjango test namespace.
-        new_installed =  ['django.contrib.sites',
-                          'django.contrib.sitemaps',
-                          'django.contrib.gis',
-                          ]
+        new_installed =  [
+            'django.contrib.sites',
+            'django.contrib.sitemaps',
+            'django.contrib.gis',
+        ]
 
         # Calling out to `geo_apps` to get GeoDjango applications supported
         # for testing.
         new_installed.extend(geo_apps())
-        settings.INSTALLED_APPS = new_installed
+        settings.INSTALLED_APPS = list(self.old_installed) + new_installed
 
         # SITE_ID needs to be set
         settings.SITE_ID = 1

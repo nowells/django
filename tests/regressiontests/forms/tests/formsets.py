@@ -29,6 +29,11 @@ class BaseFavoriteDrinksFormSet(BaseFormSet):
             seen_drinks.append(drink['name'])
 
 
+class EmptyFsetWontValidate(BaseFormSet):
+    def clean(self):
+        raise ValidationError("Clean method called")
+
+
 # Let's define a FormSet that takes a list of favorite drinks, but raises an
 # error if there are any duplicates. Used in ``test_clean_hook``,
 # ``test_regression_6926`` & ``test_regression_12878``.
@@ -851,13 +856,13 @@ class TestIsBoundBehavior(TestCase):
             'form-INITIAL_FORMS': u'0',
         }
         formset = ArticleFormSet(data)
-        self.assertEquals(0, formset.initial_form_count())
-        self.assertEquals(1, formset.total_form_count())
+        self.assertEqual(0, formset.initial_form_count())
+        self.assertEqual(1, formset.total_form_count())
         self.assertTrue(formset.is_bound)
         self.assertTrue(formset.forms[0].is_bound)
         self.assertTrue(formset.is_valid())
         self.assertTrue(formset.forms[0].is_valid())
-        self.assertEquals([{}], formset.cleaned_data)
+        self.assertEqual([{}], formset.cleaned_data)
 
 
     def test_form_errors_are_cought_by_formset(self):
@@ -871,4 +876,36 @@ class TestIsBoundBehavior(TestCase):
         }
         formset = ArticleFormSet(data)
         self.assertFalse(formset.is_valid())
-        self.assertEquals([{}, {'pub_date': [u'This field is required.']}], formset.errors)
+        self.assertEqual([{}, {'pub_date': [u'This field is required.']}], formset.errors)
+
+    def test_empty_forms_are_unbound(self):
+        data = {
+            'form-TOTAL_FORMS': u'1',
+            'form-INITIAL_FORMS': u'0',
+            'form-0-title': u'Test',
+            'form-0-pub_date': u'1904-06-16',
+        }
+        unbound_formset = ArticleFormSet()
+        bound_formset = ArticleFormSet(data)
+
+        empty_forms = []
+
+        empty_forms.append(unbound_formset.empty_form)
+        empty_forms.append(bound_formset.empty_form)
+
+        # Empty forms should be unbound
+        self.assertFalse(empty_forms[0].is_bound)
+        self.assertFalse(empty_forms[1].is_bound)
+
+        # The empty forms should be equal.
+        self.assertEqual(empty_forms[0].as_p(), empty_forms[1].as_p())
+
+class TestEmptyFormSet(TestCase): 
+    "Test that an empty formset still calls clean()"
+    def test_empty_formset_is_valid(self): 
+        EmptyFsetWontValidateFormset = formset_factory(FavoriteDrinkForm, extra=0, formset=EmptyFsetWontValidate) 
+        formset = EmptyFsetWontValidateFormset(data={'form-INITIAL_FORMS':'0', 'form-TOTAL_FORMS':'0'},prefix="form") 
+        formset2 = EmptyFsetWontValidateFormset(data={'form-INITIAL_FORMS':'0', 'form-TOTAL_FORMS':'1', 'form-0-name':'bah' },prefix="form") 
+        self.assertFalse(formset.is_valid()) 
+        self.assertFalse(formset2.is_valid()) 
+

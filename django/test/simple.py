@@ -1,5 +1,4 @@
-import sys
-import signal
+import unittest as real_unittest
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -8,14 +7,10 @@ from django.test import _doctest as doctest
 from django.test.utils import setup_test_environment, teardown_test_environment
 from django.test.testcases import OutputChecker, DocTestRunner, TestCase
 from django.utils import unittest
+from django.utils.importlib import import_module
+from django.utils.module_loading import module_has_submodule
 
-try:
-    all
-except NameError:
-    from django.utils.itercompat import all
-
-
-__all__ = ('DjangoTestRunner', 'DjangoTestSuiteRunner', 'run_tests')
+__all__ = ('DjangoTestRunner', 'DjangoTestSuiteRunner')
 
 # The module name for tests outside models.py
 TEST_MODULE = 'tests'
@@ -27,32 +22,30 @@ class DjangoTestRunner(unittest.TextTestRunner):
         import warnings
         warnings.warn(
             "DjangoTestRunner is deprecated; it's functionality is indistinguishable from TextTestRunner",
-            PendingDeprecationWarning
+            DeprecationWarning
         )
         super(DjangoTestRunner, self).__init__(*args, **kwargs)
 
 def get_tests(app_module):
+    parts = app_module.__name__.split('.')
+    prefix, last = parts[:-1], parts[-1]
     try:
-        app_path = app_module.__name__.split('.')[:-1]
-        test_module = __import__('.'.join(app_path + [TEST_MODULE]), {}, {}, TEST_MODULE)
-    except ImportError, e:
+        test_module = import_module('.'.join(prefix + [TEST_MODULE]))
+    except ImportError:
         # Couldn't import tests.py. Was it due to a missing file, or
         # due to an import error in a tests.py that actually exists?
-        import os.path
-        from imp import find_module
-        try:
-            mod = find_module(TEST_MODULE, [os.path.dirname(app_module.__file__)])
-        except ImportError:
-            # 'tests' module doesn't exist. Move on.
+        # app_module either points to a models.py file, or models/__init__.py
+        # Tests are therefore either in same directory, or one level up
+        if last == 'models':
+            app_root = import_module('.'.join(prefix))
+        else:
+            app_root = app_module
+
+        if not module_has_submodule(app_root, TEST_MODULE):
             test_module = None
         else:
-            # The module exists, so there must be an import error in the
-            # test module itself. We don't need the module; so if the
-            # module was a single file module (i.e., tests.py), close the file
-            # handle returned by find_module. Otherwise, the test module
-            # is a directory, and there is nothing to close.
-            if mod[0]:
-                mod[0].close()
+            # The module exists, so there must be an import error in the test
+            # module itself.
             raise
     return test_module
 
@@ -116,7 +109,7 @@ def build_test(label):
             TestClass = getattr(test_module, parts[1], None)
 
     try:
-        if issubclass(TestClass, unittest.TestCase):
+        if issubclass(TestClass, (unittest.TestCase, real_unittest.TestCase)):
             if len(parts) == 2: # label is app.TestClass
                 try:
                     return unittest.TestLoader().loadTestsFromTestCase(TestClass)
@@ -203,7 +196,7 @@ def dependency_ordered(test_databases, dependencies):
         deferred = []
 
         while test_databases:
-            signature, aliases = test_databases.pop()
+            signature, (db_name, aliases) = test_databases.pop()
             dependencies_satisfied = True
             for alias in aliases:
                 if alias in dependencies:
@@ -217,10 +210,10 @@ def dependency_ordered(test_databases, dependencies):
                     resolved_databases.add(alias)
 
             if dependencies_satisfied:
-                ordered_test_databases.append((signature, aliases))
+                ordered_test_databases.append((signature, (db_name, aliases)))
                 changed = True
             else:
-                deferred.append((signature, aliases))
+                deferred.append((signature, (db_name, aliases)))
 
         if not changed:
             raise ImproperlyConfigured("Circular dependency in TEST_DEPENDENCIES")
@@ -276,12 +269,11 @@ class DjangoTestSuiteRunner(object):
                 # Store a tuple with DB parameters that uniquely identify it.
                 # If we have two aliases with the same values for that tuple,
                 # we only need to create the test database once.
-                test_databases.setdefault((
-                        connection.settings_dict['HOST'],
-                        connection.settings_dict['PORT'],
-                        connection.settings_dict['ENGINE'],
-                        connection.settings_dict['NAME'],
-                    ), []).append(alias)
+                item = test_databases.setdefault(
+                    connection.creation.test_db_signature(),
+                    (connection.settings_dict['NAME'], [])
+                )
+                item[1].append(alias)
 
                 if 'TEST_DEPENDENCIES' in connection.settings_dict:
                     dependencies[alias] = connection.settings_dict['TEST_DEPENDENCIES']
@@ -292,7 +284,7 @@ class DjangoTestSuiteRunner(object):
         # Second pass -- actually create the databases.
         old_names = []
         mirrors = []
-        for (host, port, engine, db_name), aliases in dependency_ordered(test_databases.items(), dependencies):
+        for signature, (db_name, aliases) in dependency_ordered(test_databases.items(), dependencies):
             # Actually create the database for the first connection
             connection = connections[aliases[0]]
             old_names.append((connection, db_name, True))
@@ -364,12 +356,3 @@ class DjangoTestSuiteRunner(object):
         self.teardown_databases(old_config)
         self.teardown_test_environment()
         return self.suite_result(suite, result)
-
-def run_tests(test_labels, verbosity=1, interactive=True, failfast=False, extra_tests=None):
-    import warnings
-    warnings.warn(
-        'The run_tests() test runner has been deprecated in favor of DjangoTestSuiteRunner.',
-        DeprecationWarning
-    )
-    test_runner = DjangoTestSuiteRunner(verbosity=verbosity, interactive=interactive, failfast=failfast)
-    return test_runner.run_tests(test_labels, extra_tests=extra_tests)

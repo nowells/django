@@ -71,7 +71,7 @@ The new custom command can be called using ``python manage.py closepoll
 <poll_id>``.
 
 The ``handle()`` method takes zero or more ``poll_ids`` and sets ``poll.opened``
-to ``False`` for each one. If the user referenced any nonexistant polls, a
+to ``False`` for each one. If the user referenced any nonexistent polls, a
 :class:`CommandError` is raised. The ``poll.opened`` attribute does not exist
 in the :doc:`tutorial</intro/tutorial01>` and was added to
 ``polls.models.Poll`` for this example.
@@ -102,8 +102,8 @@ default options such as :djadminopt:`--verbosity` and :djadminopt:`--traceback`.
 
     The :meth:`BaseCommand.execute` method sets the hardcoded ``en-us`` locale
     because the commands shipped with Django perform several tasks
-    (for example, user-visible content and database population) that require
-    a system-neutral string language (for which we use ``en-us``).
+    (for example, user-facing content rendering and database population) that
+    require a system-neutral string language (for which we use ``en-us``).
 
     If your custom management command uses another locale, you should manually
     activate and deactivate it in your :meth:`~BaseCommand.handle` or

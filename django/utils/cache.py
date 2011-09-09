@@ -17,6 +17,7 @@ An example: i18n middleware would need to distinguish caches by the
 "Accept-language" header.
 """
 
+import hashlib
 import re
 import time
 
@@ -24,9 +25,7 @@ from django.conf import settings
 from django.core.cache import get_cache
 from django.utils.encoding import smart_str, iri_to_uri
 from django.utils.http import http_date
-from django.utils.hashcompat import md5_constructor
 from django.utils.translation import get_language
-from django.http import HttpRequest
 
 cc_delim_re = re.compile(r'\s*,\s*')
 
@@ -67,6 +66,12 @@ def patch_cache_control(response, **kwargs):
     if 'max-age' in cc and 'max_age' in kwargs:
         kwargs['max_age'] = min(cc['max-age'], kwargs['max_age'])
 
+    # Allow overriding private caching and vice versa
+    if 'private' in cc and 'public' in kwargs:
+        del cc['private']
+    elif 'public' in cc and 'private' in kwargs:
+        del cc['public']
+
     for (k, v) in kwargs.items():
         cc[k.replace('_', '-')] = v
     cc = ', '.join([dictvalue(el) for el in cc.items()])
@@ -87,6 +92,10 @@ def get_max_age(response):
         except (ValueError, TypeError):
             pass
 
+def _set_response_etag(response):
+    response['ETag'] = '"%s"' % hashlib.md5(response.content).hexdigest()
+    return response
+
 def patch_response_headers(response, cache_timeout=None):
     """
     Adds some useful headers to the given HttpResponse object:
@@ -102,7 +111,10 @@ def patch_response_headers(response, cache_timeout=None):
     if cache_timeout < 0:
         cache_timeout = 0 # Can't have max-age negative
     if settings.USE_ETAGS and not response.has_header('ETag'):
-        response['ETag'] = '"%s"' % md5_constructor(response.content).hexdigest()
+        if hasattr(response, 'render') and callable(response.render):
+            response.add_post_render_callback(_set_response_etag)
+        else:
+            response = _set_response_etag(response)
     if not response.has_header('Last-Modified'):
         response['Last-Modified'] = http_date()
     if not response.has_header('Expires'):
@@ -134,6 +146,16 @@ def patch_vary_headers(response, newheaders):
                           if newheader.lower() not in existing_headers]
     response['Vary'] = ', '.join(vary_headers + additional_headers)
 
+def has_vary_header(response, header_query):
+    """
+    Checks to see if the response has a given header name in its Vary header.
+    """
+    if not response.has_header('Vary'):
+        return False
+    vary_headers = cc_delim_re.split(response['Vary'])
+    existing_headers = set([header.lower() for header in vary_headers])
+    return header_query.lower() in existing_headers
+
 def _i18n_cache_key_suffix(request, cache_key):
     """If enabled, returns the cache key ending with a locale."""
     if settings.USE_I18N:
@@ -145,29 +167,29 @@ def _i18n_cache_key_suffix(request, cache_key):
 
 def _generate_cache_key(request, method, headerlist, key_prefix):
     """Returns a cache key from the headers given in the header list."""
-    ctx = md5_constructor()
+    ctx = hashlib.md5()
     for header in headerlist:
         value = request.META.get(header, None)
         if value is not None:
             ctx.update(value)
-    path = md5_constructor(iri_to_uri(request.path))
+    path = hashlib.md5(iri_to_uri(request.get_full_path()))
     cache_key = 'views.decorators.cache.cache_page.%s.%s.%s.%s' % (
         key_prefix, request.method, path.hexdigest(), ctx.hexdigest())
     return _i18n_cache_key_suffix(request, cache_key)
 
 def _generate_cache_header_key(key_prefix, request):
     """Returns a cache key for the header cache."""
-    path = md5_constructor(iri_to_uri(request.path))
+    path = hashlib.md5(iri_to_uri(request.get_full_path()))
     cache_key = 'views.decorators.cache.cache_header.%s.%s' % (
         key_prefix, path.hexdigest())
     return _i18n_cache_key_suffix(request, cache_key)
 
 def get_cache_key(request, key_prefix=None, method='GET', cache=None):
     """
-    Returns a cache key based on the request path. It can be used in the
-    request phase because it pulls the list of headers to take into account
-    from the global path registry and uses those to build a cache key to check
-    against.
+    Returns a cache key based on the request path and query. It can be used
+    in the request phase because it pulls the list of headers to take into
+    account from the global path registry and uses those to build a cache key
+    to check against.
 
     If there is no headerlist stored, the page needs to be rebuilt, so this
     function returns None.
@@ -210,7 +232,7 @@ def learn_cache_key(request, response, cache_timeout=None, key_prefix=None, cach
         return _generate_cache_key(request, request.method, headerlist, key_prefix)
     else:
         # if there is no Vary header, we still need a cache key
-        # for the request.path
+        # for the request.get_full_path()
         cache.set(cache_key, [], cache_timeout)
         return _generate_cache_key(request, request.method, [], key_prefix)
 

@@ -6,8 +6,8 @@ Deploying GeoDjango
 
     GeoDjango uses the GDAL geospatial library which is
     not thread safe at this time.  Thus, it is *highly* recommended
-    to not use threading when deploying -- in other words, use a
-    an appropriate configuration of Apache or the prefork method
+    to not use threading when deploying -- in other words, use an
+    appropriate configuration of Apache or the prefork method
     when using FastCGI through another Web server.
 
 Apache
@@ -22,7 +22,7 @@ matter whether the version of Apache is prefork or worker.
 
 .. note::
 
-    The ``Alias`` and ``Directory`` configurations in the the examples
+    The ``Alias`` and ``Directory`` configurations in the examples
     below use an example path to a system-wide installation folder of Django.
     Substitute in an appropriate location, if necessary, as it may be
     different than the path on your system.

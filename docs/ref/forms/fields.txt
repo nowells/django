@@ -27,7 +27,7 @@ exception or returns the clean value::
     u'foo@example.com'
     >>> f.clean(u'foo@example.com')
     u'foo@example.com'
-    >>> f.clean('invalid e-mail address')
+    >>> f.clean('invalid email address')
     Traceback (most recent call last):
     ...
     ValidationError: [u'Enter a valid e-mail address.']
@@ -208,23 +208,23 @@ fields. We've specified ``auto_id=False`` to simplify the output::
     >>> class HelpTextContactForm(forms.Form):
     ...     subject = forms.CharField(max_length=100, help_text='100 characters max.')
     ...     message = forms.CharField()
-    ...     sender = forms.EmailField(help_text='A valid e-mail address, please.')
+    ...     sender = forms.EmailField(help_text='A valid email address, please.')
     ...     cc_myself = forms.BooleanField(required=False)
     >>> f = HelpTextContactForm(auto_id=False)
     >>> print f.as_table()
-    <tr><th>Subject:</th><td><input type="text" name="subject" maxlength="100" /><br />100 characters max.</td></tr>
+    <tr><th>Subject:</th><td><input type="text" name="subject" maxlength="100" /><br /><span class="helptext">100 characters max.</span></td></tr>
     <tr><th>Message:</th><td><input type="text" name="message" /></td></tr>
-    <tr><th>Sender:</th><td><input type="text" name="sender" /><br />A valid e-mail address, please.</td></tr>
+    <tr><th>Sender:</th><td><input type="text" name="sender" /><br />A valid email address, please.</td></tr>
     <tr><th>Cc myself:</th><td><input type="checkbox" name="cc_myself" /></td></tr>
     >>> print f.as_ul()
-    <li>Subject: <input type="text" name="subject" maxlength="100" /> 100 characters max.</li>
+    <li>Subject: <input type="text" name="subject" maxlength="100" /> <span class="helptext">100 characters max.</span></li>
     <li>Message: <input type="text" name="message" /></li>
-    <li>Sender: <input type="text" name="sender" /> A valid e-mail address, please.</li>
+    <li>Sender: <input type="text" name="sender" /> A valid email address, please.</li>
     <li>Cc myself: <input type="checkbox" name="cc_myself" /></li>
     >>> print f.as_p()
-    <p>Subject: <input type="text" name="subject" maxlength="100" /> 100 characters max.</p>
+    <p>Subject: <input type="text" name="subject" maxlength="100" /> <span class="helptext">100 characters max.</span></p>
     <p>Message: <input type="text" name="message" /></p>
-    <p>Sender: <input type="text" name="sender" /> A valid e-mail address, please.</p>
+    <p>Sender: <input type="text" name="sender" /> A valid email address, please.</p>
     <p>Cc myself: <input type="checkbox" name="cc_myself" /></p>
 
 ``error_messages``
@@ -278,6 +278,7 @@ as the rendered output.
 See the :ref:`format localization <format-localization>` documentation for
 more information.
 
+.. _built-in fields:
 
 Built-in ``Field`` classes
 --------------------------
@@ -481,7 +482,7 @@ Takes four optional arguments:
     * Default widget: ``TextInput``
     * Empty value: ``''`` (an empty string)
     * Normalizes to: A Unicode object.
-    * Validates that the given value is a valid e-mail address, using a
+    * Validates that the given value is a valid email address, using a
       moderately complex regular expression.
     * Error message keys: ``required``, ``invalid``
 
@@ -490,7 +491,7 @@ If provided, these arguments ensure that the string is at most or at least the
 given length.
 
 .. versionchanged:: 1.2
-   The EmailField previously did not recognize e-mail addresses as valid that
+   The EmailField previously did not recognize email addresses as valid that
    contained an IDN (Internationalized Domain Name; a domain containing
    unicode characters) domain part. This has now been corrected.
 
@@ -503,9 +504,14 @@ given length.
     * Empty value: ``None``
     * Normalizes to: An ``UploadedFile`` object that wraps the file content
       and file name into a single object.
-    * Validates that non-empty file data has been bound to the form.
+    * Can validate that non-empty file data has been bound to the form.
     * Error message keys: ``required``, ``invalid``, ``missing``, ``empty``,
       ``max_length``
+
+Has two optional arguments for validation, ''max_length'' and 
+''allow_empty_file''. If provided, these ensure that the file name is at 
+most the given length, and that validation will succeed even if the file 
+content is empty.
 
 To learn more about the ``UploadedFile`` object, see the :doc:`file uploads
 documentation </topics/http/file-uploads>`.
@@ -616,6 +622,43 @@ Takes two optional arguments for validation:
     * Validates that the given value is a valid IPv4 address, using a regular
       expression.
     * Error message keys: ``required``, ``invalid``
+
+``GenericIPAddressField``
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. class:: GenericIPAddressField(**kwargs)
+
+.. versionadded:: 1.4
+
+A field containing either an IPv4 or an IPv6 address.
+
+    * Default widget: ``TextInput``
+    * Empty value: ``''`` (an empty string)
+    * Normalizes to: A Unicode object. IPv6 addresses are
+      normalized as described below.
+    * Validates that the given value is a valid IP address.
+    * Error message keys: ``required``, ``invalid``
+
+The IPv6 address normalization follows :rfc:`4291#section-2.2` section 2.2,
+including using the IPv4 format suggested in paragraph 3 of that section, like
+``::ffff:192.0.2.0``. For example, ``2001:0::0:01`` would be normalized to
+``2001::1``, and ``::ffff:0a0a:0a0a`` to ``::ffff:10.10.10.10``. All characters
+are converted to lowercase.
+
+Takes two optional arguments:
+
+.. attribute:: GenericIPAddressField.protocol
+
+    Limits valid inputs to the specified protocol.
+    Accepted values are ``both`` (default), ``IPv4``
+    or ``IPv6``. Matching is case insensitive.
+
+.. attribute:: GenericIPAddressField.unpack_ipv4
+
+    Unpacks IPv4 mapped addresses like ``::ffff::192.0.2.1``.
+    If this option is enabled that address would be unpacked to
+    ``192.0.2.1``. Default is disabled. Can only be used
+    when ``protocol`` is set to ``'both'``.
 
 ``MultipleChoiceField``
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -759,7 +802,7 @@ Takes the following optional arguments:
 .. attribute:: URLField.validator_user_agent
 
     String used as the user-agent used when checking for a URL's existence.
-    Defaults to the value of the ``URL_VALIDATOR_USER_AGENT`` setting.
+    Defaults to the value of the :setting:`URL_VALIDATOR_USER_AGENT` setting.
 
 .. versionchanged:: 1.2
    The URLField previously did not recognize URLs as valid that contained an IDN
@@ -836,7 +879,8 @@ Takes one extra required argument:
     * Normalizes to: A Python ``datetime.datetime`` object.
     * Validates that the given value is a ``datetime.datetime`` or string
       formatted in a particular datetime format.
-    * Error message keys: ``required``, ``invalid``
+    * Error message keys: ``required``, ``invalid``, ``invalid_date``,
+      ``invalid_time``
 
 Takes two optional arguments:
 
@@ -892,8 +936,8 @@ representing a foreign key.  A single argument is required:
 
 .. attribute:: ModelChoiceField.empty_label
 
-    By default the ``<select>`` widget used by ``ModelChoiceField`` will have a
-    an empty choice at the top of the list. You can change the text of this
+    By default the ``<select>`` widget used by ``ModelChoiceField`` will have an
+    empty choice at the top of the list. You can change the text of this
     label (which is ``"---------"`` by default) with the ``empty_label``
     attribute, or you can disable the empty label entirely by setting
     ``empty_label`` to ``None``::

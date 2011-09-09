@@ -1,5 +1,4 @@
-from django.conf import settings
-from django.db import connection, router, transaction
+from django.db import connection, router
 from django.db.backends import util
 from django.db.models import signals, get_model
 from django.db.models.fields import (AutoField, Field, IntegerField,
@@ -9,8 +8,7 @@ from django.db.models.query import QuerySet
 from django.db.models.query_utils import QueryWrapper
 from django.db.models.deletion import CASCADE
 from django.utils.encoding import smart_unicode
-from django.utils.translation import (ugettext_lazy as _, string_concat,
-    ungettext, ugettext)
+from django.utils.translation import ugettext_lazy as _, string_concat
 from django.utils.functional import curry
 from django.core import exceptions
 from django import forms
@@ -67,7 +65,8 @@ def add_lazy_relation(cls, field, relation, operation):
     # string right away. If get_model returns None, it means that the related
     # model isn't loaded yet, so we need to pend the relation until the class
     # is prepared.
-    model = get_model(app_label, model_name, False)
+    model = get_model(app_label, model_name,
+                      seed_cache=False, only_installed=False)
     if model:
         operation(field, model, cls)
     else:
@@ -178,9 +177,20 @@ class RelatedField(object):
         # the primary key may itself be an object - so we need to keep drilling
         # down until we hit a value that can be used for a comparison.
         v = value
+
+        # In the case of an FK to 'self', this check allows to_field to be used
+        # for both forwards and reverse lookups across the FK. (For normal FKs,
+        # it's only relevant for forward lookups).
+        if isinstance(v, self.rel.to):
+            field_name = getattr(self.rel, "field_name", None)
+        else:
+            field_name = None
         try:
             while True:
-                v = getattr(v, v._meta.pk.name)
+                if field_name is None:
+                    field_name = v._meta.pk.name
+                v = getattr(v, field_name)
+                field_name = None
         except AttributeError:
             pass
         except exceptions.ObjectDoesNotExist:
@@ -447,9 +457,7 @@ class ForeignRelatedObjectsDescriptor(object):
                 remove.alters_data = True
 
                 def clear(self):
-                    for obj in self.all():
-                        setattr(obj, rel_field.name, None)
-                        obj.save()
+                    self.update(**{rel_field.name: None})
                 clear.alters_data = True
 
         manager = RelatedManager()
@@ -555,7 +563,7 @@ def create_many_related_manager(superclass, rel=False):
                         raise TypeError("'%s' instance expected" % self.model._meta.object_name)
                     else:
                         new_ids.add(obj)
-                db = router.db_for_write(self.through.__class__, instance=self.instance)
+                db = router.db_for_write(self.through, instance=self.instance)
                 vals = self.through._default_manager.using(db).values_list(target_field_name, flat=True)
                 vals = vals.filter(**{
                     source_field_name: self._pk_val,
@@ -597,7 +605,7 @@ def create_many_related_manager(superclass, rel=False):
                     else:
                         old_ids.add(obj)
                 # Work out what DB we're operating on
-                db = router.db_for_write(self.through.__class__, instance=self.instance)
+                db = router.db_for_write(self.through, instance=self.instance)
                 # Send a signal to the other end if need be.
                 if self.reverse or source_field_name == self.source_field_name:
                     # Don't send the signal when we are deleting the
@@ -618,7 +626,7 @@ def create_many_related_manager(superclass, rel=False):
                         model=self.model, pk_set=old_ids, using=db)
 
         def _clear_items(self, source_field_name):
-            db = router.db_for_write(self.through.__class__, instance=self.instance)
+            db = router.db_for_write(self.through, instance=self.instance)
             # source_col_name: the PK colname in join_table for the source object
             if self.reverse or source_field_name == self.source_field_name:
                 # Don't send the signal when we are clearing the
@@ -890,11 +898,17 @@ class ForeignKey(RelatedField, Field):
         # don't get a related descriptor.
         if not self.rel.is_hidden():
             setattr(cls, related.get_accessor_name(), ForeignRelatedObjectsDescriptor(related))
+            if self.rel.limit_choices_to:
+                cls._meta.related_fkey_lookups.append(self.rel.limit_choices_to)
         if self.rel.field_name is None:
             self.rel.field_name = cls._meta.pk.name
 
     def formfield(self, **kwargs):
         db = kwargs.pop('using', None)
+        if isinstance(self.rel.to, basestring):
+            raise ValueError("Cannot create form field for %r yet, because "
+                             "its related model %r has not been loaded yet" %
+                             (self.name, self.rel.to))
         defaults = {
             'form_class': forms.ModelChoiceField,
             'queryset': self.rel.to._default_manager.using(db).complex_filter(self.rel.limit_choices_to),
@@ -993,6 +1007,10 @@ class ManyToManyField(RelatedField, Field):
             assert not to._meta.abstract, "%s cannot define a relation with abstract class %s" % (self.__class__.__name__, to._meta.object_name)
         except AttributeError: # to._meta doesn't exist, so it must be RECURSIVE_RELATIONSHIP_CONSTANT
             assert isinstance(to, basestring), "%s(%r) is invalid. First parameter to ManyToManyField must be either a model, a model name, or the string %r" % (self.__class__.__name__, to, RECURSIVE_RELATIONSHIP_CONSTANT)
+            # Python 2.6 and earlier require dictionary keys to be of str type,
+            # not unicode and class names must be ASCII (in Python 2.x), so we
+            # forcibly coerce it here (breaks early if there's a problem).
+            to = str(to)
 
         kwargs['verbose_name'] = kwargs.get('verbose_name', None)
         kwargs['rel'] = ManyToManyRel(to,
@@ -1119,6 +1137,11 @@ class ManyToManyField(RelatedField, Field):
 
         self.m2m_field_name = curry(self._get_m2m_attr, related, 'name')
         self.m2m_reverse_field_name = curry(self._get_m2m_reverse_attr, related, 'name')
+
+        get_m2m_rel = curry(self._get_m2m_attr, related, 'rel')
+        self.m2m_target_field_name = lambda: get_m2m_rel().field_name
+        get_m2m_reverse_rel = curry(self._get_m2m_reverse_attr, related, 'rel')
+        self.m2m_reverse_target_field_name = lambda: get_m2m_reverse_rel().field_name
 
     def set_attributes_from_rel(self):
         pass

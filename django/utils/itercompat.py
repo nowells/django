@@ -5,8 +5,9 @@ these implementations if necessary.
 """
 
 import itertools
+import warnings
 
-# Fallback for Python 2.4, Python 2.5
+# Fallback for Python 2.5
 def product(*args, **kwds):
     """
     Taken from http://docs.python.org/library/itertools.html#itertools.product
@@ -33,12 +34,16 @@ def is_iterable(x):
         return True
 
 def all(iterable):
+    warnings.warn("django.utils.itercompat.all is deprecated; use the native version instead",
+                  PendingDeprecationWarning)
     for item in iterable:
         if not item:
             return False
     return True
 
 def any(iterable):
+    warnings.warn("django.utils.itercompat.any is deprecated; use the native version instead",
+                  PendingDeprecationWarning)
     for item in iterable:
         if item:
             return True

@@ -19,14 +19,14 @@ class BaseHandler(object):
     ]
 
     def __init__(self):
-        self._request_middleware = self._view_middleware = self._response_middleware = self._exception_middleware = None
+        self._request_middleware = self._view_middleware = self._template_response_middleware = self._response_middleware = self._exception_middleware = None
 
 
     def load_middleware(self):
         """
         Populate middleware lists from settings.MIDDLEWARE_CLASSES.
 
-        Must be called after the environment is fixed (see __call__).
+        Must be called after the environment is fixed (see __call__ in subclasses).
         """
         from django.conf import settings
         from django.core import exceptions
@@ -131,6 +131,13 @@ class BaseHandler(object):
                         view_name = callback.__class__.__name__ + '.__call__' # If it's a class
                     raise ValueError("The view %s.%s didn't return an HttpResponse object." % (callback.__module__, view_name))
 
+                # If the response supports deferred rendering, apply template
+                # response middleware and the render the response
+                if hasattr(response, 'render') and callable(response.render):
+                    for middleware_method in self._template_response_middleware:
+                        response = middleware_method(request, response)
+                    response = response.render()
+
             except http.Http404, e:
                 logger.warning('Not Found: %s' % request.path,
                             extra={
@@ -150,12 +157,22 @@ class BaseHandler(object):
                         finally:
                             receivers = signals.got_request_exception.send(sender=self.__class__, request=request)
             except exceptions.PermissionDenied:
-                logger.warning('Forbidden (Permission denied): %s' % request.path,
-                            extra={
-                                'status_code': 403,
-                                'request': request
-                            })
-                response = http.HttpResponseForbidden('<h1>Permission denied</h1>')
+                logger.warning(
+                    'Forbidden (Permission denied): %s' % request.path,
+                    extra={
+                        'status_code': 403,
+                        'request': request
+                    })
+                try:
+                    callback, param_dict = resolver.resolve403()
+                    response = callback(request, **param_dict)
+                except:
+                    try:
+                        response = self.handle_uncaught_exception(request,
+                            resolver, sys.exc_info())
+                    finally:
+                        receivers = signals.got_request_exception.send(
+                            sender=self.__class__, request=request)
             except SystemExit:
                 # Allow sys.exit() to actually exit. See tickets #1023 and #4701
                 raise
@@ -169,13 +186,6 @@ class BaseHandler(object):
             urlresolvers.set_urlconf(None)
 
         try:
-            # If the response supports deferred rendering, apply template
-            # response middleware and the render the response
-            if hasattr(response, 'render') and callable(response.render):
-                for middleware_method in self._template_response_middleware:
-                    response = middleware_method(request, response)
-                response.render()
-
             # Apply response middleware, regardless of the response
             for middleware_method in self._response_middleware:
                 response = middleware_method(request, response)
@@ -201,17 +211,17 @@ class BaseHandler(object):
         if settings.DEBUG_PROPAGATE_EXCEPTIONS:
             raise
 
-        if settings.DEBUG:
-            from django.views import debug
-            return debug.technical_500_response(request, *exc_info)
-
         logger.error('Internal Server Error: %s' % request.path,
             exc_info=exc_info,
             extra={
                 'status_code': 500,
-                'request':request
+                'request': request
             }
         )
+
+        if settings.DEBUG:
+            from django.views import debug
+            return debug.technical_500_response(request, *exc_info)
 
         # If Http500 handler is not installed, re-raise last exception
         if resolver.urlconf_module is None:

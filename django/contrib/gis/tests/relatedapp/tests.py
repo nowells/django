@@ -130,7 +130,7 @@ class RelatedGeoModelTest(TestCase):
 
         # Now creating a second Parcel where the borders are the same, just
         # in different coordinate systems.  The center points are also the
-        # the same (but in different coordinate systems), and this time they
+        # same (but in different coordinate systems), and this time they
         # actually correspond to the centroid of the border.
         c1 = b1.centroid
         c2 = c1.transform(2276, clone=True)
@@ -173,8 +173,8 @@ class RelatedGeoModelTest(TestCase):
         for m, d, t in zip(gqs, gvqs, gvlqs):
             # The values should be Geometry objects and not raw strings returned
             # by the spatial database.
-            self.failUnless(isinstance(d['point'], Geometry))
-            self.failUnless(isinstance(t[1], Geometry))
+            self.assertTrue(isinstance(d['point'], Geometry))
+            self.assertTrue(isinstance(t[1], Geometry))
             self.assertEqual(m.point, d['point'])
             self.assertEqual(m.point, t[1])
 
@@ -207,8 +207,8 @@ class RelatedGeoModelTest(TestCase):
         combined = qs1 | qs2
         names = [c.name for c in combined]
         self.assertEqual(2, len(names))
-        self.failUnless('Aurora' in names)
-        self.failUnless('Kecksburg' in names)
+        self.assertTrue('Aurora' in names)
+        self.assertTrue('Kecksburg' in names)
 
     def test11_geoquery_pickle(self):
         "Ensuring GeoQuery objects are unpickled correctly.  See #10839."

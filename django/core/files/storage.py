@@ -8,7 +8,7 @@ from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured, SuspiciousOperation
 from django.core.files import locks, File
 from django.core.files.move import file_move_safe
-from django.utils.encoding import force_unicode
+from django.utils.encoding import force_unicode, filepath_to_uri
 from django.utils.functional import LazyObject
 from django.utils.importlib import import_module
 from django.utils.text import get_valid_filename
@@ -161,10 +161,18 @@ class FileSystemStorage(Storage):
     def _save(self, name, content):
         full_path = self.path(name)
 
+        # Create any intermediate directories that do not exist.
+        # Note that there is a race between os.path.exists and os.makedirs:
+        # if os.makedirs fails with EEXIST, the directory was created
+        # concurrently, and we can continue normally. Refs #16082.
         directory = os.path.dirname(full_path)
         if not os.path.exists(directory):
-            os.makedirs(directory)
-        elif not os.path.isdir(directory):
+            try:
+                os.makedirs(directory)
+            except OSError, e:
+                if e.errno != errno.EEXIST:
+                    raise
+        if not os.path.isdir(directory):
             raise IOError("%s exists and is not a directory." % directory)
 
         # There's a potential race condition between get_available_name and
@@ -211,8 +219,15 @@ class FileSystemStorage(Storage):
     def delete(self, name):
         name = self.path(name)
         # If the file exists, delete it from the filesystem.
+        # Note that there is a race between os.path.exists and os.remove:
+        # if os.remove fails with ENOENT, the file was removed
+        # concurrently, and we can continue normally.
         if os.path.exists(name):
-            os.remove(name)
+            try:
+                os.remove(name)
+            except OSError, e:
+                if e.errno != errno.ENOENT:
+                    raise
 
     def exists(self, name):
         return os.path.exists(self.path(name))
@@ -240,7 +255,7 @@ class FileSystemStorage(Storage):
     def url(self, name):
         if self.base_url is None:
             raise ValueError("This file is not accessible via a URL.")
-        return urlparse.urljoin(self.base_url, name).replace('\\', '/')
+        return urlparse.urljoin(self.base_url, filepath_to_uri(name))
 
     def accessed_time(self, name):
         return datetime.fromtimestamp(os.path.getatime(self.path(name)))

@@ -1,7 +1,8 @@
 import copy
 import pickle
 
-from django.http import QueryDict, HttpResponse, CompatCookie, BadHeaderError
+from django.http import (QueryDict, HttpResponse, SimpleCookie, BadHeaderError,
+        parse_cookie)
 from django.utils import unittest
 
 class QueryDictTests(unittest.TestCase):
@@ -242,26 +243,30 @@ class HttpResponseTests(unittest.TestCase):
         self.assertRaises(BadHeaderError, r.__setitem__, 'test\rstr', 'test')
         self.assertRaises(BadHeaderError, r.__setitem__, 'test\nstr', 'test')
 
+    def test_dict_behavior(self):
+        """
+        Test for bug #14020: Make HttpResponse.get work like dict.get
+        """
+        r = HttpResponse()
+        self.assertEqual(r.get('test'), None)
+
 class CookieTests(unittest.TestCase):
     def test_encode(self):
         """
         Test that we don't output tricky characters in encoded value
         """
-        # Python 2.4 compatibility note: Python 2.4's cookie implementation
-        # always returns Set-Cookie headers terminating in semi-colons.
-        # That's not the bug this test is looking for, so ignore it.
-        c = CompatCookie()
+        c = SimpleCookie()
         c['test'] = "An,awkward;value"
-        self.assert_(";" not in c.output().rstrip(';')) # IE compat
-        self.assert_("," not in c.output().rstrip(';')) # Safari compat
+        self.assertTrue(";" not in c.output().rstrip(';')) # IE compat
+        self.assertTrue("," not in c.output().rstrip(';')) # Safari compat
 
     def test_decode(self):
         """
         Test that we can still preserve semi-colons and commas
         """
-        c = CompatCookie()
+        c = SimpleCookie()
         c['test'] = "An,awkward;value"
-        c2 = CompatCookie()
+        c2 = SimpleCookie()
         c2.load(c.output())
         self.assertEqual(c['test'].value, c2['test'].value)
 
@@ -269,8 +274,30 @@ class CookieTests(unittest.TestCase):
         """
         Test that we haven't broken normal encoding
         """
-        c = CompatCookie()
+        c = SimpleCookie()
         c['test'] = "\xf0"
-        c2 = CompatCookie()
+        c2 = SimpleCookie()
         c2.load(c.output())
         self.assertEqual(c['test'].value, c2['test'].value)
+
+    def test_nonstandard_keys(self):
+        """
+        Test that a single non-standard cookie name doesn't affect all cookies. Ticket #13007.
+        """
+        self.assertTrue('good_cookie' in parse_cookie('good_cookie=yes;bad:cookie=yes').keys())
+
+    def test_repeated_nonstandard_keys(self):
+        """
+        Test that a repeated non-standard name doesn't affect all cookies. Ticket #15852
+        """
+        self.assertTrue('good_cookie' in parse_cookie('a,=b; a,=c; good_cookie=yes').keys())
+
+    def test_httponly_after_load(self):
+        """
+        Test that we can use httponly attribute on cookies that we load
+        """
+        c = SimpleCookie()
+        c.load("name=val")
+        c['name']['httponly'] = True
+        self.assertTrue(c['name']['httponly'])
+

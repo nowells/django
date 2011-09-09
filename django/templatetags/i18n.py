@@ -1,14 +1,15 @@
+from __future__ import with_statement
 import re
 
-from django.template import Node, Variable, VariableNode
-from django.template import TemplateSyntaxError, TokenParser, Library
-from django.template import TOKEN_TEXT, TOKEN_VAR
+from django.template import (Node, Variable, TemplateSyntaxError,
+    TokenParser, Library, TOKEN_TEXT, TOKEN_VAR)
 from django.template.base import _render_value_in_context
-from django.utils import translation
-from django.utils.encoding import force_unicode
 from django.template.defaulttags import token_kwargs
+from django.utils import translation
+
 
 register = Library()
+
 
 class GetAvailableLanguagesNode(Node):
     def __init__(self, variable):
@@ -19,6 +20,7 @@ class GetAvailableLanguagesNode(Node):
         context[self.variable] = [(k, translation.ugettext(v)) for k, v in settings.LANGUAGES]
         return ''
 
+
 class GetLanguageInfoNode(Node):
     def __init__(self, lang_code, variable):
         self.lang_code = Variable(lang_code)
@@ -28,6 +30,7 @@ class GetLanguageInfoNode(Node):
         lang_code = self.lang_code.resolve(context)
         context[self.variable] = translation.get_language_info(lang_code)
         return ''
+
 
 class GetLanguageInfoListNode(Node):
     def __init__(self, languages, variable):
@@ -47,6 +50,7 @@ class GetLanguageInfoListNode(Node):
         context[self.variable] = [self.get_language_info(lang) for lang in langs]
         return ''
 
+
 class GetCurrentLanguageNode(Node):
     def __init__(self, variable):
         self.variable = variable
@@ -54,6 +58,7 @@ class GetCurrentLanguageNode(Node):
     def render(self, context):
         context[self.variable] = translation.get_language()
         return ''
+
 
 class GetCurrentLanguageBidiNode(Node):
     def __init__(self, variable):
@@ -63,9 +68,11 @@ class GetCurrentLanguageBidiNode(Node):
         context[self.variable] = translation.get_language_bidi()
         return ''
 
+
 class TranslateNode(Node):
-    def __init__(self, filter_expression, noop):
+    def __init__(self, filter_expression, noop, asvar=None):
         self.noop = noop
+        self.asvar = asvar
         self.filter_expression = filter_expression
         if isinstance(self.filter_expression.var, basestring):
             self.filter_expression.var = Variable(u"'%s'" % self.filter_expression.var)
@@ -73,7 +80,13 @@ class TranslateNode(Node):
     def render(self, context):
         self.filter_expression.var.translate = not self.noop
         output = self.filter_expression.resolve(context)
-        return _render_value_in_context(output, context)
+        value = _render_value_in_context(output, context)
+        if self.asvar:
+            context[self.asvar] = value
+            return ''
+        else:
+            return value
+
 
 class BlockTranslateNode(Node):
     def __init__(self, extra_context, singular, plural=None, countervar=None,
@@ -103,20 +116,39 @@ class BlockTranslateNode(Node):
         # the end of function
         context.update(tmp_context)
         singular, vars = self.render_token_list(self.singular)
+        # Escape all isolated '%'
+        singular = re.sub(u'%(?!\()', u'%%', singular)
         if self.plural and self.countervar and self.counter:
             count = self.counter.resolve(context)
             context[self.countervar] = count
             plural, plural_vars = self.render_token_list(self.plural)
+            plural = re.sub(u'%(?!\()', u'%%', plural)
             result = translation.ungettext(singular, plural, count)
             vars.extend(plural_vars)
         else:
             result = translation.ugettext(singular)
-        # Escape all isolated '%' before substituting in the context.
-        result = re.sub(u'%(?!\()', u'%%', result)
-        data = dict([(v, _render_value_in_context(context[v], context)) for v in vars])
+        data = dict([(v, _render_value_in_context(context.get(v, ''), context)) for v in vars])
         context.pop()
-        return result % data
+        try:
+            result = result % data
+        except KeyError:
+            with translation.override(None):
+                result = self.render(context)
+        return result
 
+
+class LanguageNode(Node):
+    def __init__(self, nodelist, language):
+        self.nodelist = nodelist
+        self.language = language
+
+    def render(self, context):
+        with translation.override(self.language.resolve(context)):
+            output = self.nodelist.render(context)
+        return output
+
+
+@register.tag("get_available_languages")
 def do_get_available_languages(parser, token):
     """
     This will store a list of available languages
@@ -138,6 +170,7 @@ def do_get_available_languages(parser, token):
         raise TemplateSyntaxError("'get_available_languages' requires 'as variable' (got %r)" % args)
     return GetAvailableLanguagesNode(args[2])
 
+@register.tag("get_language_info")
 def do_get_language_info(parser, token):
     """
     This will store the language information dictionary for the given language
@@ -156,6 +189,7 @@ def do_get_language_info(parser, token):
         raise TemplateSyntaxError("'%s' requires 'for string as variable' (got %r)" % (args[0], args[1:]))
     return GetLanguageInfoNode(args[2], args[4])
 
+@register.tag("get_language_info_list")
 def do_get_language_info_list(parser, token):
     """
     This will store a list of language information dictionaries for the given
@@ -178,15 +212,19 @@ def do_get_language_info_list(parser, token):
         raise TemplateSyntaxError("'%s' requires 'for sequence as variable' (got %r)" % (args[0], args[1:]))
     return GetLanguageInfoListNode(args[2], args[4])
 
+@register.filter
 def language_name(lang_code):
     return translation.get_language_info(lang_code)['name']
 
+@register.filter
 def language_name_local(lang_code):
     return translation.get_language_info(lang_code)['name_local']
 
+@register.filter
 def language_bidi(lang_code):
     return translation.get_language_info(lang_code)['bidi']
 
+@register.tag("get_current_language")
 def do_get_current_language(parser, token):
     """
     This will store the current language in the context.
@@ -204,6 +242,7 @@ def do_get_current_language(parser, token):
         raise TemplateSyntaxError("'get_current_language' requires 'as variable' (got %r)" % args)
     return GetCurrentLanguageNode(args[2])
 
+@register.tag("get_current_language_bidi")
 def do_get_current_language_bidi(parser, token):
     """
     This will store the current language layout in the context.
@@ -221,6 +260,7 @@ def do_get_current_language_bidi(parser, token):
         raise TemplateSyntaxError("'get_current_language_bidi' requires 'as variable' (got %r)" % args)
     return GetCurrentLanguageBidiNode(args[2])
 
+@register.tag("trans")
 def do_translate(parser, token):
     """
     This will mark a string for translation and will
@@ -262,23 +302,29 @@ def do_translate(parser, token):
             # where single quote use is supported.
             if value[0] == "'":
                 pos = None
-                m = re.match("^'([^']+)'(\|.*$)",value)
+                m = re.match("^'([^']+)'(\|.*$)", value)
                 if m:
-                    value = '"%s"%s' % (m.group(1).replace('"','\\"'),m.group(2))
+                    value = '"%s"%s' % (m.group(1).replace('"','\\"'), m.group(2))
                 elif value[-1] == "'":
                     value = '"%s"' % value[1:-1].replace('"','\\"')
 
-            if self.more():
-                if self.tag() == 'noop':
-                    noop = True
-                else:
-                    raise TemplateSyntaxError("only option for 'trans' is 'noop'")
-            else:
-                noop = False
-            return (value, noop)
-    value, noop = TranslateParser(token.contents).top()
-    return TranslateNode(parser.compile_filter(value), noop)
+            noop = False
+            asvar = None
 
+            while self.more():
+                tag = self.tag()
+                if tag == 'noop':
+                    noop = True
+                elif tag == 'as':
+                    asvar = self.tag()
+                else:
+                    raise TemplateSyntaxError(
+                        "only options for 'trans' are 'noop' and 'as VAR.")
+            return (value, noop, asvar)
+    value, noop, asvar = TranslateParser(token.contents).top()
+    return TranslateNode(parser.compile_filter(value), noop, asvar)
+
+@register.tag("blocktrans")
 def do_block_translate(parser, token):
     """
     This will translate a block of text with parameters.
@@ -357,14 +403,22 @@ def do_block_translate(parser, token):
     return BlockTranslateNode(extra_context, singular, plural, countervar,
             counter)
 
-register.tag('get_available_languages', do_get_available_languages)
-register.tag('get_language_info', do_get_language_info)
-register.tag('get_language_info_list', do_get_language_info_list)
-register.tag('get_current_language', do_get_current_language)
-register.tag('get_current_language_bidi', do_get_current_language_bidi)
-register.tag('trans', do_translate)
-register.tag('blocktrans', do_block_translate)
+@register.tag
+def language(parser, token):
+    """
+    This will enable the given language just for this block.
 
-register.filter(language_name)
-register.filter(language_name_local)
-register.filter(language_bidi)
+    Usage::
+
+        {% language "de" %}
+            This is {{ bar }} and {{ boo }}.
+        {% endlanguage %}
+
+    """
+    bits = token.split_contents()
+    if len(bits) != 2:
+        raise TemplateSyntaxError("'%s' takes one argument (language)" % bits[0])
+    language = parser.compile_filter(bits[1])
+    nodelist = parser.parse(('endlanguage',))
+    parser.delete_first_token()
+    return LanguageNode(nodelist, language)

@@ -2,16 +2,13 @@
 The main QuerySet implementation. This provides the public API for the ORM.
 """
 
-from itertools import izip
+import copy
 
 from django.db import connections, router, transaction, IntegrityError
-from django.db.models.aggregates import Aggregate
-from django.db.models.fields import DateField
 from django.db.models.query_utils import (Q, select_related_descend,
     deferred_class_factory, InvalidQuery)
 from django.db.models.deletion import Collector
 from django.db.models import signals, sql
-from django.utils.copycompat import deepcopy
 
 # Used to control how many objects are worked with at once in some cases (e.g.
 # when deleting objects).
@@ -51,7 +48,7 @@ class QuerySet(object):
             if k in ('_iter','_result_cache'):
                 obj.__dict__[k] = None
             else:
-                obj.__dict__[k] = deepcopy(v, memo)
+                obj.__dict__[k] = copy.deepcopy(v, memo)
         return obj
 
     def __getstate__(self):
@@ -81,7 +78,7 @@ class QuerySet(object):
             else:
                 self._result_cache = list(self.iterator())
         elif self._iter:
-            self._result_cache.extend(list(self._iter))
+            self._result_cache.extend(self._iter)
         return len(self._result_cache)
 
     def __iter__(self):
@@ -229,10 +226,6 @@ class QuerySet(object):
         only_load = self.query.get_loaded_field_names()
         if not fill_cache:
             fields = self.model._meta.fields
-            pk_idx = self.model._meta.pk_index()
-
-        index_start = len(extra_select)
-        aggregate_start = index_start + len(self.model._meta.fields)
 
         load_fields = []
         # If only/defer clauses have been specified,
@@ -241,9 +234,6 @@ class QuerySet(object):
             for field, model in self.model._meta.get_fields_with_model():
                 if model is None:
                     model = self.model
-                if field == self.model._meta.pk:
-                    # Record the index of the primary key when it is found
-                    pk_idx = len(load_fields)
                 try:
                     if field.name in only_load[model]:
                         # Add a field that has been explicitly included
@@ -252,6 +242,9 @@ class QuerySet(object):
                     # Model wasn't explicitly listed in the only_load table
                     # Therefore, we need to load all fields from this model
                     load_fields.append(field.name)
+
+        index_start = len(extra_select)
+        aggregate_start = index_start + len(load_fields or self.model._meta.fields)
 
         skip = None
         if load_fields and not fill_cache:
@@ -279,7 +272,6 @@ class QuerySet(object):
             else:
                 if skip:
                     row_data = row[index_start:aggregate_start]
-                    pk_val = row_data[pk_idx]
                     obj = model_cls(**dict(zip(init_list, row_data)))
                 else:
                     # Omit aggregates in object creation.
@@ -369,9 +361,13 @@ class QuerySet(object):
         assert kwargs, \
                 'get_or_create() must be passed at least one keyword argument'
         defaults = kwargs.pop('defaults', {})
+        lookup = kwargs.copy()
+        for f in self.model._meta.fields:
+            if f.attname in lookup:
+                lookup[f.name] = lookup.pop(f.attname)
         try:
             self._for_write = True
-            return self.get(**kwargs), False
+            return self.get(**lookup), False
         except self.model.DoesNotExist:
             try:
                 params = dict([(k, v) for k, v in kwargs.items() if '__' not in k])
@@ -384,7 +380,7 @@ class QuerySet(object):
             except IntegrityError, e:
                 transaction.savepoint_rollback(sid, using=self.db)
                 try:
-                    return self.get(**kwargs), False
+                    return self.get(**lookup), False
                 except self.model.DoesNotExist:
                     raise e
 
@@ -399,6 +395,7 @@ class QuerySet(object):
                 "Cannot change a query once a slice has been taken."
         obj = self._clone()
         obj.query.set_limits(high=1)
+        obj.query.clear_ordering()
         obj.query.add_ordering('-%s' % latest_by)
         return obj.get()
 
@@ -409,12 +406,11 @@ class QuerySet(object):
         """
         assert self.query.can_filter(), \
                 "Cannot use 'limit' or 'offset' with in_bulk"
-        assert isinstance(id_list, (tuple,  list, set, frozenset)), \
-                "in_bulk() must be provided with a list of IDs."
         if not id_list:
             return {}
         qs = self._clone()
         qs.query.add_filter(('pk__in', id_list))
+        qs.query.clear_ordering(force_empty=True)
         return dict([(obj._get_pk_val(), obj) for obj in qs.iterator()])
 
     def delete(self):
@@ -432,6 +428,7 @@ class QuerySet(object):
         del_query._for_write = True
 
         # Disable non-supported fields.
+        del_query.query.select_for_update = False
         del_query.query.select_related = False
         del_query.query.clear_ordering()
 
@@ -580,6 +577,18 @@ class QuerySet(object):
         else:
             return self._filter_or_exclude(None, **filter_obj)
 
+    def select_for_update(self, **kwargs):
+        """
+        Returns a new QuerySet instance that will select objects with a
+        FOR UPDATE lock.
+        """
+        # Default to false for nowait
+        nowait = kwargs.pop('nowait', False)
+        obj = self._clone()
+        obj.query.select_for_update = True
+        obj.query.select_for_update_nowait = nowait
+        return obj
+
     def select_related(self, *fields, **kwargs):
         """
         Returns a new QuerySet instance that will select related objects.
@@ -616,17 +625,18 @@ class QuerySet(object):
         """
         for arg in args:
             if arg.default_alias in kwargs:
-                raise ValueError("The %s named annotation conflicts with the "
+                raise ValueError("The named annotation '%s' conflicts with the "
                                  "default name for another annotation."
                                  % arg.default_alias)
             kwargs[arg.default_alias] = arg
 
-        names = set(self.model._meta.get_all_field_names())
+        names = getattr(self, '_fields', None)
+        if names is None:
+            names = set(self.model._meta.get_all_field_names())
         for aggregate in kwargs:
             if aggregate in names:
-                raise ValueError("The %s annotation conflicts with a field on "
+                raise ValueError("The annotation '%s' conflicts with a field on "
                     "the model." % aggregate)
-
 
         obj = self._clone()
 
@@ -708,7 +718,7 @@ class QuerySet(object):
 
     def using(self, alias):
         """
-        Selects which database this QuerySet should excecute it's query against.
+        Selects which database this QuerySet should excecute its query against.
         """
         clone = self._clone()
         clone._db = alias
@@ -1114,6 +1124,14 @@ class EmptyQuerySet(QuerySet):
         """
         return 0
 
+    def aggregate(self, *args, **kwargs):
+        """
+        Return a dict mapping the aggregate names to None
+        """
+        for arg in args:
+            kwargs[arg.default_alias] = arg
+        return dict([(key, None) for key in kwargs])
+
     # EmptyQuerySet is always an empty result in where-clauses (and similar
     # situations).
     value_annotation = False
@@ -1367,7 +1385,7 @@ class RawQuerySet(object):
             yield instance
 
     def __repr__(self):
-        return "<RawQuerySet: %r>" % (self.raw_query % self.params)
+        return "<RawQuerySet: %r>" % (self.raw_query % tuple(self.params))
 
     def __getitem__(self, k):
         return list(self)[k]

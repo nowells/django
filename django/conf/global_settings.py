@@ -13,7 +13,7 @@ DEBUG = False
 TEMPLATE_DEBUG = False
 
 # Whether the framework should propagate raw exceptions rather than catching
-# them. This is useful under some testing siutations and should never be used
+# them. This is useful under some testing situations and should never be used
 # on a live site.
 DEBUG_PROPAGATE_EXCEPTIONS = False
 
@@ -42,6 +42,7 @@ LANGUAGE_CODE = 'en-us'
 # should be the utf-8 encoded local name for the language.
 LANGUAGES = (
     ('ar', gettext_noop('Arabic')),
+    ('az', gettext_noop('Azerbaijani')),
     ('bg', gettext_noop('Bulgarian')),
     ('bn', gettext_noop('Bengali')),
     ('bs', gettext_noop('Bosnian')),
@@ -55,6 +56,8 @@ LANGUAGES = (
     ('en-gb', gettext_noop('British English')),
     ('es', gettext_noop('Spanish')),
     ('es-ar', gettext_noop('Argentinian Spanish')),
+    ('es-mx', gettext_noop('Mexican Spanish')),
+    ('es-ni', gettext_noop('Nicaraguan Spanish')),
     ('et', gettext_noop('Estonian')),
     ('eu', gettext_noop('Basque')),
     ('fa', gettext_noop('Persian')),
@@ -81,7 +84,6 @@ LANGUAGES = (
     ('ml', gettext_noop('Malayalam')),
     ('mn', gettext_noop('Mongolian')),
     ('nl', gettext_noop('Dutch')),
-    ('no', gettext_noop('Norwegian')),
     ('nb', gettext_noop('Norwegian Bokmal')),
     ('nn', gettext_noop('Norwegian Nynorsk')),
     ('pa', gettext_noop('Punjabi')),
@@ -101,6 +103,7 @@ LANGUAGES = (
     ('th', gettext_noop('Thai')),
     ('tr', gettext_noop('Turkish')),
     ('uk', gettext_noop('Ukrainian')),
+    ('ur', gettext_noop('Urdu')),
     ('vi', gettext_noop('Vietnamese')),
     ('zh-cn', gettext_noop('Simplified Chinese')),
     ('zh-tw', gettext_noop('Traditional Chinese')),
@@ -120,7 +123,7 @@ LANGUAGE_COOKIE_NAME = 'django_language'
 USE_L10N = False
 
 # Not-necessarily-technical managers of the site. They get broken link
-# notifications and other various e-mails.
+# notifications and other various emails.
 MANAGERS = ADMINS
 
 # Default content type and charset to use for all HttpResponse objects, if a
@@ -135,12 +138,12 @@ FILE_CHARSET = 'utf-8'
 # E-mail address that error messages come from.
 SERVER_EMAIL = 'root@localhost'
 
-# Whether to send broken-link e-mails.
+# Whether to send broken-link emails.
 SEND_BROKEN_LINK_EMAILS = False
 
 # Database connection info.
 # Legacy format
-DATABASE_ENGINE = ''           # 'postgresql_psycopg2', 'postgresql', 'mysql', 'sqlite3' or 'oracle'.
+DATABASE_ENGINE = ''           # 'postgresql_psycopg2', 'mysql', 'sqlite3' or 'oracle'.
 DATABASE_NAME = ''             # Or path to database file if using sqlite3.
 DATABASE_USER = ''             # Not used with sqlite3.
 DATABASE_PASSWORD = ''         # Not used with sqlite3.
@@ -161,10 +164,10 @@ DATABASE_ROUTERS = []
 # to a module that defines an EmailBackend class.
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
-# Host for sending e-mail.
+# Host for sending email.
 EMAIL_HOST = 'localhost'
 
-# Port for sending e-mail.
+# Port for sending email.
 EMAIL_PORT = 25
 
 # Optional SMTP authentication information for EMAIL_HOST.
@@ -203,7 +206,7 @@ TEMPLATE_CONTEXT_PROCESSORS = (
 # Output to use in template system for invalid (e.g. misspelled) variables.
 TEMPLATE_STRING_IF_INVALID = ''
 
-# Default e-mail address to use for various automated correspondence from
+# Default email address to use for various automated correspondence from
 # the site managers.
 DEFAULT_FROM_EMAIL = 'webmaster@localhost'
 
@@ -243,9 +246,17 @@ ALLOWED_INCLUDE_ROOTS = ()
 # is an admin.
 ADMIN_FOR = ()
 
-# 404s that may be ignored.
-IGNORABLE_404_STARTS = ('/cgi-bin/', '/_vti_bin', '/_vti_inf')
-IGNORABLE_404_ENDS = ('mail.pl', 'mailform.pl', 'mail.cgi', 'mailform.cgi', 'favicon.ico', '.php')
+# List of compiled regular expression objects representing URLs that need not
+# be reported when SEND_BROKEN_LINK_EMAILS is True. Here are a few examples:
+#    import re
+#    IGNORABLE_404_URLS = (
+#        re.compile(r'^/apple-touch-icon.*\.png$'),
+#        re.compile(r'^/favicon.ico$),
+#        re.compile(r'^/robots.txt$),
+#        re.compile(r'^/phpmyadmin/),
+#        re.compile(r'\.(cgi|php|pl)$'),
+#    )
+IGNORABLE_404_URLS = ()
 
 # A secret key for this particular Django installation. Used in secret-key
 # hashing algorithms. Set this in your settings, or Django will complain
@@ -355,12 +366,15 @@ TIME_INPUT_FORMATS = (
 # * Note that these format strings are different from the ones to display dates
 DATETIME_INPUT_FORMATS = (
     '%Y-%m-%d %H:%M:%S',     # '2006-10-25 14:30:59'
+    '%Y-%m-%d %H:%M:%S.%f',  # '2006-10-25 14:30:59.000200'
     '%Y-%m-%d %H:%M',        # '2006-10-25 14:30'
     '%Y-%m-%d',              # '2006-10-25'
     '%m/%d/%Y %H:%M:%S',     # '10/25/2006 14:30:59'
+    '%m/%d/%Y %H:%M:%S.%f',  # '10/25/2006 14:30:59.000200'
     '%m/%d/%Y %H:%M',        # '10/25/2006 14:30'
     '%m/%d/%Y',              # '10/25/2006'
     '%m/%d/%y %H:%M:%S',     # '10/25/06 14:30:59'
+    '%m/%d/%y %H:%M:%S.%f',  # '10/25/06 14:30:59.000200'
     '%m/%d/%y %H:%M',        # '10/25/06 14:30'
     '%m/%d/%y',              # '10/25/06'
 )
@@ -375,7 +389,7 @@ DECIMAL_SEPARATOR = '.'
 # Boolean that sets whether to add thousand separator when formatting numbers
 USE_THOUSAND_SEPARATOR = False
 
-# Number of digits that will be together, when spliting them by
+# Number of digits that will be together, when splitting them by
 # THOUSAND_SEPARATOR. 0 means no grouping, 3 means splitting by thousands...
 NUMBER_GROUPING = 0
 
@@ -394,6 +408,9 @@ URL_VALIDATOR_USER_AGENT = "Django/%s (http://www.djangoproject.com)" % get_vers
 # The tablespaces to use for each model when not specified otherwise.
 DEFAULT_TABLESPACE = ''
 DEFAULT_INDEX_TABLESPACE = ''
+
+# Default X-Frame-Options header value
+X_FRAME_OPTIONS = 'SAMEORIGIN'
 
 ##############
 # MIDDLEWARE #
@@ -436,7 +453,6 @@ CACHES = {
 }
 # The cache backend to use.  See the docstring in django.core.cache for the
 # possible values.
-CACHE_BACKEND = 'locmem://'
 CACHE_MIDDLEWARE_KEY_PREFIX = ''
 CACHE_MIDDLEWARE_SECONDS = 600
 CACHE_MIDDLEWARE_ALIAS = 'default'
@@ -450,26 +466,6 @@ COMMENTS_ALLOW_PROFANITIES = False
 # The profanities that will trigger a validation error in the
 # 'hasNoProfanities' validator. All of these should be in lowercase.
 PROFANITIES_LIST = ()
-
-# The group ID that designates which users are banned.
-# Set to None if you're not using it.
-COMMENTS_BANNED_USERS_GROUP = None
-
-# The group ID that designates which users can moderate comments.
-# Set to None if you're not using it.
-COMMENTS_MODERATORS_GROUP = None
-
-# The group ID that designates the users whose comments should be e-mailed to MANAGERS.
-# Set to None if you're not using it.
-COMMENTS_SKETCHY_USERS_GROUP = None
-
-# The system will e-mail MANAGERS the first COMMENTS_FIRST_FEW comments by each
-# user. Set this to 0 if you want to disable it.
-COMMENTS_FIRST_FEW = 0
-
-# A tuple of IP addresses that have been banned from participating in various
-# Django-powered features.
-BANNED_IPS = ()
 
 ##################
 # AUTHENTICATION #
@@ -486,6 +482,12 @@ LOGIN_REDIRECT_URL = '/accounts/profile/'
 # The number of days a password reset link is valid for
 PASSWORD_RESET_TIMEOUT_DAYS = 3
 
+###########
+# SIGNING #
+###########
+
+SIGNING_BACKEND = 'django.core.signing.TimestampSigner'
+
 ########
 # CSRF #
 ########
@@ -494,16 +496,18 @@ PASSWORD_RESET_TIMEOUT_DAYS = 3
 # rejected by the CSRF middleware.
 CSRF_FAILURE_VIEW = 'django.views.csrf.csrf_failure'
 
-# Name and domain for CSRF cookie.
+# Settings for CSRF cookie.
 CSRF_COOKIE_NAME = 'csrftoken'
 CSRF_COOKIE_DOMAIN = None
+CSRF_COOKIE_PATH = '/'
+CSRF_COOKIE_SECURE = False
 
 ############
 # MESSAGES #
 ############
 
-# Class to use as messges backend
-MESSAGE_STORAGE = 'django.contrib.messages.storage.user_messages.LegacyFallbackStorage'
+# Class to use as messages backend
+MESSAGE_STORAGE = 'django.contrib.messages.storage.fallback.FallbackStorage'
 
 # Default values of MESSAGE_LEVEL and MESSAGE_TAGS are defined within
 # django.contrib.messages to avoid imports in this settings file.
@@ -521,20 +525,31 @@ LOGGING_CONFIG = 'django.utils.log.dictConfig'
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'filters': {
+        'require_debug_false': {
+            '()': 'django.utils.log.CallbackFilter',
+            'callback': lambda r: not DEBUG
+        }
+    },
     'handlers': {
         'mail_admins': {
             'level': 'ERROR',
+            'filters': ['require_debug_false'],
             'class': 'django.utils.log.AdminEmailHandler'
         }
     },
     'loggers': {
-        'django.request':{
+        'django.request': {
             'handlers': ['mail_admins'],
             'level': 'ERROR',
             'propagate': True,
         },
     }
 }
+
+# Default exception reporter filter class used in case none has been
+# specifically assigned to the HttpRequest instance.
+DEFAULT_EXCEPTION_REPORTER_FILTER = 'django.views.debug.SafeExceptionReporterFilter'
 
 ###########
 # TESTING #
@@ -578,8 +593,3 @@ STATICFILES_FINDERS = (
     'django.contrib.staticfiles.finders.AppDirectoriesFinder',
 #    'django.contrib.staticfiles.finders.DefaultStorageFinder',
 )
-
-# URL prefix for admin media -- CSS, JavaScript and images.
-# Make sure to use a trailing slash.
-# Examples: "http://foo.com/static/admin/", "/static/admin/".
-ADMIN_MEDIA_PREFIX = '/static/admin/'

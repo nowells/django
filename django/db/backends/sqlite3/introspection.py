@@ -85,9 +85,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
             table, column = [s.strip('"') for s in m.groups()]
 
             cursor.execute("SELECT sql FROM sqlite_master WHERE tbl_name = %s", [table])
-            result = cursor.fetchone()
-            if not result:
-                continue
+            result = cursor.fetchall()[0]
             other_table_results = result[0].strip()
             li, ri = other_table_results.index('('), other_table_results.rindex(')')
             other_table_results = other_table_results[li+1:ri]
@@ -104,6 +102,35 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                     break
 
         return relations
+
+    def get_key_columns(self, cursor, table_name):
+        """
+        Returns a list of (column_name, referenced_table_name, referenced_column_name) for all
+        key columns in given table.
+        """
+        key_columns = []
+
+        # Schema for this table
+        cursor.execute("SELECT sql FROM sqlite_master WHERE tbl_name = %s AND type = %s", [table_name, "table"])
+        results = cursor.fetchone()[0].strip()
+        results = results[results.index('(')+1:results.rindex(')')]
+
+        # Walk through and look for references to other tables. SQLite doesn't
+        # really have enforced references, but since it echoes out the SQL used
+        # to create the table we can look for REFERENCES statements used there.
+        for field_index, field_desc in enumerate(results.split(',')):
+            field_desc = field_desc.strip()
+            if field_desc.startswith("UNIQUE"):
+                continue
+
+            m = re.search('"(.*)".*references (.*) \(["|](.*)["|]\)', field_desc, re.I)
+            if not m:
+                continue
+
+            # This will append (column_name, referenced_table_name, referenced_column_name) to key_columns
+            key_columns.append(tuple([s.strip('"') for s in m.groups()]))
+
+        return key_columns
 
     def get_indexes(self, cursor, table_name):
         """
@@ -129,6 +156,21 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
             name = info[0][2] # seqno, cid, name
             indexes[name]['unique'] = True
         return indexes
+
+    def get_primary_key_column(self, cursor, table_name):
+        """
+        Get the column name of the primary key for the given table.
+        """
+        # Don't use PRAGMA because that causes issues with some transactions
+        cursor.execute("SELECT sql FROM sqlite_master WHERE tbl_name = %s AND type = %s", [table_name, "table"])
+        results = cursor.fetchone()[0].strip()
+        results = results[results.index('(')+1:results.rindex(')')]
+        for field_desc in results.split(','):
+            field_desc = field_desc.strip()
+            m = re.search('"(.*)".*PRIMARY KEY$', field_desc)
+            if m:
+                return m.groups()[0]
+        return None
 
     def _table_info(self, cursor, name):
         cursor.execute('PRAGMA table_info(%s)' % self.connection.ops.quote_name(name))

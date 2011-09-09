@@ -6,7 +6,7 @@ Introduction
 ============
 
 GeoDjango is an add-on for Django that turns it into a world-class geographic
-Web framework.  GeoDjango strives to make at as simple as possible to create
+Web framework.  GeoDjango strives to make it as simple as possible to create
 geographic Web applications, like location-based services.  Some features include:
 
 * Django model fields for `OGC`_ geometries.
@@ -321,7 +321,7 @@ may also use the following to populate your spatial database:
 GDAL Interface
 --------------
 
-Earlier we used the the ``ogrinfo`` to explore the contents of the world borders
+Earlier we used the ``ogrinfo`` to explore the contents of the world borders
 shapefile.  Included within GeoDjango is an interface to GDAL's powerful OGR
 library -- in other words, you'll be able explore all the vector data sources
 that OGR supports via a Pythonic API.
@@ -630,14 +630,13 @@ in transformation SQL, allowing the developer to work at a higher level
 of abstraction::
 
     >>> qs = WorldBorders.objects.filter(mpoly__intersects=pnt)
-    >>> qs.query.as_sql() # Generating the SQL
-    ('SELECT "world_worldborders"."id", "world_worldborders"."name", "world_worldborders"."area",
+    >>> print qs.query # Generating the SQL
+    SELECT "world_worldborders"."id", "world_worldborders"."name", "world_worldborders"."area",
     "world_worldborders"."pop2005", "world_worldborders"."fips", "world_worldborders"."iso2",
     "world_worldborders"."iso3", "world_worldborders"."un", "world_worldborders"."region",
     "world_worldborders"."subregion", "world_worldborders"."lon", "world_worldborders"."lat",
     "world_worldborders"."mpoly" FROM "world_worldborders"
-    WHERE ST_Intersects("world_worldborders"."mpoly", ST_Transform(%s, 4326))',
-    (<django.contrib.gis.db.backend.postgis.adaptor.PostGISAdaptor object at 0x25641b0>,))
+    WHERE ST_Intersects("world_worldborders"."mpoly", ST_Transform(%s, 4326))
     >>> qs # printing evaluates the queryset
     [<WorldBorders: United States>]
 
@@ -754,5 +753,5 @@ option class in your ``admin.py`` file::
 
 .. [#] Special thanks to Bjørn Sandvik of `thematicmapping.org <http://thematicmapping.org>`_ for providing and maintaining this data set.
 .. [#] GeoDjango basic apps was written by Dane Springmeyer, Josh Livni, and Christopher Schmidt.
-.. [#] Here the point is for the `University of Houston Law Center <http://www.law.uh.edu/>`_ .
+.. [#] Here the point is for the `University of Houston Law Center <http://www.law.uh.edu/>`_.
 .. [#] Open Geospatial Consortium, Inc., `OpenGIS Simple Feature Specification For SQL <http://www.opengis.org/docs/99-049.pdf>`_, Document 99-049.

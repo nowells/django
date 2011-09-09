@@ -1,7 +1,6 @@
 from django.test import TestCase
 from django.db import connection
-from models import Unmanaged1, Unmanaged2, Managed1
-from models import A01, A02, B01, B02, C01, C02
+from models import A01, A02, B01, B02, C01, C02, Unmanaged2, Managed1
 
 class SimpleTests(TestCase):
 
@@ -47,7 +46,7 @@ class ManyToManyUnmanagedTests(TestCase):
         """
         table = Unmanaged2._meta.get_field('mm').m2m_db_table()
         tables = connection.introspection.table_names()
-        self.assert_(table not in tables, "Table '%s' should not exist, but it does." % table)
+        self.assertTrue(table not in tables, "Table '%s' should not exist, but it does." % table)
 
     def test_many_to_many_between_unmanaged_and_managed(self):
         """
@@ -55,4 +54,4 @@ class ManyToManyUnmanagedTests(TestCase):
         """
         table = Managed1._meta.get_field('mm').m2m_db_table()
         tables = connection.introspection.table_names()
-        self.assert_(table in tables, "Table '%s' does not exist." % table)
+        self.assertTrue(table in tables, "Table '%s' does not exist." % table)

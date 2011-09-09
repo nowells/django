@@ -58,6 +58,8 @@ settings file. Here's an explanation of all available values for
     been replaced with the new dictionary-based :setting:`CACHES`
     setting.
 
+.. _memcached:
+
 Memcached
 ---------
 
@@ -114,7 +116,7 @@ One excellent feature of Memcached is its ability to share cache over multiple
 servers. This means you can run Memcached daemons on multiple machines, and the
 program will treat the group of machines as a *single* cache, without the need
 to duplicate cache values on each machine. To take advantage of this feature,
-include all server addresses in :setting:`BACKEND <CACHES-BACKEND>`, either
+include all server addresses in :setting:`LOCATION <CACHES-LOCATION>`, either
 separated by semicolons or as a list.
 
 In this example, the cache is shared over Memcached instances running on IP
@@ -399,8 +401,8 @@ of 60 seconds, and a maximum capacity of 1000 items::
 
     CACHES = {
         'default': {
-            'BACKEND': 'django.core.cache.backends.filebased.FileCache',
-            'LOCATION': '127.0.0.1:11211',
+            'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache',
+            'LOCATION': '/var/tmp/django_cache',
             'TIMEOUT': 60,
             'OPTIONS': {
                 'MAX_ENTRIES': 1000
@@ -418,7 +420,7 @@ Once the cache is set up, the simplest way to use caching is to cache your
 entire site. You'll need to add
 ``'django.middleware.cache.UpdateCacheMiddleware'`` and
 ``'django.middleware.cache.FetchFromCacheMiddleware'`` to your
-``MIDDLEWARE_CLASSES`` setting, as in this example::
+:setting:`MIDDLEWARE_CLASSES` setting, as in this example::
 
     MIDDLEWARE_CLASSES = (
         'django.middleware.cache.UpdateCacheMiddleware',
@@ -446,7 +448,7 @@ The cache middleware caches every page that doesn't have GET or POST
 parameters. Optionally, if the :setting:`CACHE_MIDDLEWARE_ANONYMOUS_ONLY`
 setting is ``True``, only anonymous requests (i.e., not those made by a
 logged-in user) will be cached. This is a simple and effective way of disabling
-caching for any user-specific pages (include Django's admin interface). Note
+caching for any user-specific pages (including Django's admin interface). Note
 that if you use :setting:`CACHE_MIDDLEWARE_ANONYMOUS_ONLY`, you should make
 sure you've activated ``AuthenticationMiddleware``. The cache middleware
 expects that a HEAD request is answered with the same response headers as
@@ -492,7 +494,7 @@ __ `Controlling cache: Using other headers`_
 The per-view cache
 ==================
 
-.. function ``django.views.decorators.cache.cache_page``
+.. function:: django.views.decorators.cache.cache_page
 
 A more granular way to use the caching framework is by caching the output of
 individual views. ``django.views.decorators.cache`` defines a ``cache_page``
@@ -569,11 +571,8 @@ Here's the same thing, with ``my_view`` wrapped in ``cache_page``::
     from django.views.decorators.cache import cache_page
 
     urlpatterns = ('',
-        (r'^foo/(\d{1,2})/$', cache_page(my_view, 60 * 15)),
+        (r'^foo/(\d{1,2})/$', cache_page(60 * 15)(my_view)),
     )
-
-If you take this approach, don't forget to import ``cache_page`` within your
-URLconf.
 
 Template fragment caching
 =========================
@@ -613,7 +612,7 @@ If :setting:`USE_I18N` is set to ``True`` the per-site middleware cache will
 :ref:`respect the active language<i18n-cache-key>`. For the ``cache`` template
 tag you could use one of the
 :ref:`translation-specific variables<template-translation-vars>` available in
-templates to archieve the same result:
+templates to achieve the same result:
 
 .. code-block:: html+django
 
@@ -841,7 +840,7 @@ keys unaffected. Continuing our previous example::
     # Version 2 isn't available, either
     >>> cache.get('my_key', version=2)
     None
-    # But version 3 *is* availble
+    # But version 3 *is* available
     >>> cache.get('my_key', version=3)
     'hello world!'
 
@@ -939,7 +938,7 @@ Many Web pages' contents differ based on authentication and a host of other
 variables, and cache systems that blindly save pages based purely on URLs could
 expose incorrect or sensitive data to subsequent visitors to those pages.
 
-For example, say you operate a Web e-mail system, and the contents of the
+For example, say you operate a Web email system, and the contents of the
 "inbox" page obviously depend on which user is logged in. If an ISP blindly
 cached your site, then the first user who logged in through that ISP would have
 his user-specific inbox page cached for subsequent visitors to the site. That's
@@ -960,9 +959,13 @@ mechanism should take into account when building its cache key. For example, if
 the contents of a Web page depend on a user's language preference, the page is
 said to "vary on language."
 
+.. versionchanged:: 1.3
+    In Django 1.3 the full request path -- including the query -- is used
+    to create the cache keys, instead of only the path component in Django 1.2.
+
 By default, Django's cache system creates its cache keys using the requested
-path (e.g., ``"/stories/2005/jun/23/bank_robbed/"``). This means every request
-to that URL will use the same cached version, regardless of user-agent
+path and query -- e.g., ``"/stories/2005/?order_by=author"``. This means every
+request to that URL will use the same cached version, regardless of user-agent
 differences such as cookies or language preferences. However, if this page
 produces different content based on some difference in request headers -- such
 as a cookie, or a language, or a user-agent -- you'll need to use the ``Vary``
@@ -1056,6 +1059,28 @@ Django, use the ``cache_control`` view decorator. Example::
 This decorator takes care of sending out the appropriate HTTP header behind the
 scenes.
 
+Note that the cache control settings "private" and "public" are mutually
+exclusive. The decorator ensures that the "public" directive is removed if
+"private" should be set (and vice versa). An example use of the two directives
+would be a blog site that offers both private and public entries. Public
+entries may be cached on any shared cache. The following code uses
+``patch_cache_control``, the manual way to modify the cache control header
+(it is internally called by the ``cache_control`` decorator)::
+
+    from django.views.decorators.cache import patch_cache_control
+    from django.views.decorators.vary import vary_on_cookie
+
+    @vary_on_cookie
+    def list_blog_entries_view(request):
+        if request.user.is_anonymous():
+            response = render_only_public_entries()
+            patch_cache_control(response, public=True)
+        else:
+            response = render_private_and_public_entries(request.user)
+            patch_cache_control(response, private=True)
+
+        return response
+
 There are a few other ways to control cache parameters. For example, HTTP
 allows applications to do the following:
 
@@ -1144,4 +1169,3 @@ where middleware is applied first-to-last, so an item at the top of the list
 runs *first* during the request phase. The ``FetchFromCacheMiddleware`` also
 needs to run after other middleware updates the ``Vary`` header, so
 ``FetchFromCacheMiddleware`` must be *after* any item that does so.
-

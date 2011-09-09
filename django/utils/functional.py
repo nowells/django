@@ -1,113 +1,14 @@
-# License for code in this file that was taken from Python 2.5.
-
-# PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2
-# --------------------------------------------
-#
-# 1. This LICENSE AGREEMENT is between the Python Software Foundation
-# ("PSF"), and the Individual or Organization ("Licensee") accessing and
-# otherwise using this software ("Python") in source or binary form and
-# its associated documentation.
-#
-# 2. Subject to the terms and conditions of this License Agreement, PSF
-# hereby grants Licensee a nonexclusive, royalty-free, world-wide
-# license to reproduce, analyze, test, perform and/or display publicly,
-# prepare derivative works, distribute, and otherwise use Python
-# alone or in any derivative version, provided, however, that PSF's
-# License Agreement and PSF's notice of copyright, i.e., "Copyright (c)
-# 2001, 2002, 2003, 2004, 2005, 2006, 2007 Python Software Foundation;
-# All Rights Reserved" are retained in Python alone or in any derivative
-# version prepared by Licensee.
-#
-# 3. In the event Licensee prepares a derivative work that is based on
-# or incorporates Python or any part thereof, and wants to make
-# the derivative work available to others as provided herein, then
-# Licensee hereby agrees to include in any such work a brief summary of
-# the changes made to Python.
-#
-# 4. PSF is making Python available to Licensee on an "AS IS"
-# basis.  PSF MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
-# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, PSF MAKES NO AND
-# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
-# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON WILL NOT
-# INFRINGE ANY THIRD PARTY RIGHTS.
-#
-# 5. PSF SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
-# FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
-# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON,
-# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
-#
-# 6. This License Agreement will automatically terminate upon a material
-# breach of its terms and conditions.
-#
-# 7. Nothing in this License Agreement shall be deemed to create any
-# relationship of agency, partnership, or joint venture between PSF and
-# Licensee.  This License Agreement does not grant permission to use PSF
-# trademarks or trade name in a trademark sense to endorse or promote
-# products or services of Licensee, or any third party.
-#
-# 8. By copying, installing or otherwise using Python, Licensee
-# agrees to be bound by the terms and conditions of this License
-# Agreement.
+import operator
+from functools import wraps, update_wrapper
 
 
+# You can't trivially replace this `functools.partial` because this binds to
+# classes and returns bound instances, whereas functools.partial (on CPython)
+# is a type and its instances don't bind.
 def curry(_curried_func, *args, **kwargs):
     def _curried(*moreargs, **morekwargs):
         return _curried_func(*(args+moreargs), **dict(kwargs, **morekwargs))
     return _curried
-
-### Begin from Python 2.5 functools.py ########################################
-
-# Summary of changes made to the Python 2.5 code below:
-#   * swapped ``partial`` for ``curry`` to maintain backwards-compatibility
-#     in Django.
-
-# Copyright (c) 2001, 2002, 2003, 2004, 2005, 2006, 2007 Python Software Foundation.
-# All Rights Reserved.
-
-###############################################################################
-
-# update_wrapper() and wraps() are tools to help write
-# wrapper functions that can handle naive introspection
-
-WRAPPER_ASSIGNMENTS = ('__module__', '__name__', '__doc__')
-WRAPPER_UPDATES = ('__dict__',)
-def update_wrapper(wrapper,
-                   wrapped,
-                   assigned = WRAPPER_ASSIGNMENTS,
-                   updated = WRAPPER_UPDATES):
-    """Update a wrapper function to look like the wrapped function
-
-       wrapper is the function to be updated
-       wrapped is the original function
-       assigned is a tuple naming the attributes assigned directly
-       from the wrapped function to the wrapper function (defaults to
-       functools.WRAPPER_ASSIGNMENTS)
-       updated is a tuple naming the attributes off the wrapper that
-       are updated with the corresponding attribute from the wrapped
-       function (defaults to functools.WRAPPER_UPDATES)
-    """
-    for attr in assigned:
-        setattr(wrapper, attr, getattr(wrapped, attr))
-    for attr in updated:
-        getattr(wrapper, attr).update(getattr(wrapped, attr))
-    # Return the wrapper so this can be used as a decorator via curry()
-    return wrapper
-
-def wraps(wrapped,
-          assigned = WRAPPER_ASSIGNMENTS,
-          updated = WRAPPER_UPDATES):
-    """Decorator factory to apply update_wrapper() to a wrapper function
-
-       Returns a decorator that invokes update_wrapper() with the decorated
-       function as the wrapper argument and the arguments to wraps() as the
-       remaining arguments. Default arguments are as for update_wrapper().
-       This is a convenience function to simplify applying curry() to
-       update_wrapper().
-    """
-    return curry(update_wrapper, wrapped=wrapped,
-                 assigned=assigned, updated=updated)
-
-### End from Python 2.5 functools.py ##########################################
 
 def memoize(func, cache, num_args):
     """
@@ -117,6 +18,7 @@ def memoize(func, cache, num_args):
 
     Only the first num_args are considered when creating the key.
     """
+    @wraps(func)
     def wrapper(*args):
         mem_args = args[:num_args]
         if mem_args in cache:
@@ -124,7 +26,7 @@ def memoize(func, cache, num_args):
         result = func(*args)
         cache[mem_args] = result
         return result
-    return wraps(func)(wrapper)
+    return wrapper
 
 class Promise(object):
     """
@@ -167,14 +69,15 @@ def lazy(func, *resultclasses):
             cls.__dispatch = {}
             for resultclass in resultclasses:
                 cls.__dispatch[resultclass] = {}
-                for (k, v) in resultclass.__dict__.items():
-                    # All __promise__ return the same wrapper method, but they
-                    # also do setup, inserting the method into the dispatch
-                    # dict.
-                    meth = cls.__promise__(resultclass, k, v)
-                    if hasattr(cls, k):
-                        continue
-                    setattr(cls, k, meth)
+                for type_ in reversed(resultclass.mro()):
+                    for (k, v) in type_.__dict__.items():
+                        # All __promise__ return the same wrapper method, but they
+                        # also do setup, inserting the method into the dispatch
+                        # dict.
+                        meth = cls.__promise__(resultclass, k, v)
+                        if hasattr(cls, k):
+                            continue
+                        setattr(cls, k, meth)
             cls._delegate_str = str in resultclasses
             cls._delegate_unicode = unicode in resultclasses
             assert not (cls._delegate_str and cls._delegate_unicode), "Cannot call lazy() with both str and unicode return types."
@@ -235,11 +138,12 @@ def lazy(func, *resultclasses):
             memo[id(self)] = self
             return self
 
+    @wraps(func)
     def __wrapper__(*args, **kw):
         # Creates the proxy object, instead of the actual value.
         return __proxy__(args, kw)
 
-    return wraps(func)(__wrapper__)
+    return __wrapper__
 
 def _lazy_proxy_unpickle(func, args, kwargs, *resultclasses):
     return lazy(func, *resultclasses)(*args, **kwargs)
@@ -251,6 +155,7 @@ def allow_lazy(func, *resultclasses):
     immediately, otherwise a __proxy__ is returned that will evaluate the
     function when needed.
     """
+    @wraps(func)
     def wrapper(*args, **kwargs):
         for arg in list(args) + kwargs.values():
             if isinstance(arg, Promise):
@@ -258,7 +163,15 @@ def allow_lazy(func, *resultclasses):
         else:
             return func(*args, **kwargs)
         return lazy(func, *resultclasses)(*args, **kwargs)
-    return wraps(func)(wrapper)
+    return wrapper
+
+empty = object()
+def new_method_proxy(func):
+    def inner(self, *args):
+        if self._wrapped is empty:
+            self._setup()
+        return func(self._wrapped, *args)
+    return inner
 
 class LazyObject(object):
     """
@@ -269,26 +182,23 @@ class LazyObject(object):
     instantiation. If you don't need to do that, use SimpleLazyObject.
     """
     def __init__(self):
-        self._wrapped = None
+        self._wrapped = empty
 
-    def __getattr__(self, name):
-        if self._wrapped is None:
-            self._setup()
-        return getattr(self._wrapped, name)
+    __getattr__ = new_method_proxy(getattr)
 
     def __setattr__(self, name, value):
         if name == "_wrapped":
             # Assign to __dict__ to avoid infinite __setattr__ loops.
             self.__dict__["_wrapped"] = value
         else:
-            if self._wrapped is None:
+            if self._wrapped is empty:
                 self._setup()
             setattr(self._wrapped, name, value)
 
     def __delattr__(self, name):
         if name == "_wrapped":
             raise TypeError("can't delete _wrapped.")
-        if self._wrapped is None:
+        if self._wrapped is empty:
             self._setup()
         delattr(self._wrapped, name)
 
@@ -300,11 +210,8 @@ class LazyObject(object):
 
     # introspection support:
     __members__ = property(lambda self: self.__dir__())
+    __dir__ = new_method_proxy(dir)
 
-    def __dir__(self):
-        if self._wrapped is None:
-            self._setup()
-        return  dir(self._wrapped)
 
 class SimpleLazyObject(LazyObject):
     """
@@ -323,45 +230,49 @@ class SimpleLazyObject(LazyObject):
         value.
         """
         self.__dict__['_setupfunc'] = func
-        # For some reason, we have to inline LazyObject.__init__ here to avoid
-        # recursion
-        self._wrapped = None
+        super(SimpleLazyObject, self).__init__()
 
-    def __str__(self):
-        if self._wrapped is None: self._setup()
-        return str(self._wrapped)
+    def _setup(self):
+        self._wrapped = self._setupfunc()
 
-    def __unicode__(self):
-        if self._wrapped is None: self._setup()
-        return unicode(self._wrapped)
+    __str__ = new_method_proxy(str)
+    __unicode__ = new_method_proxy(unicode)
 
     def __deepcopy__(self, memo):
-        if self._wrapped is None:
+        if self._wrapped is empty:
             # We have to use SimpleLazyObject, not self.__class__, because the
             # latter is proxied.
             result = SimpleLazyObject(self._setupfunc)
             memo[id(self)] = result
             return result
         else:
-            # Changed to use deepcopy from copycompat, instead of copy
-            # For Python 2.4.
-            from django.utils.copycompat import deepcopy
-            return deepcopy(self._wrapped, memo)
+            import copy
+            return copy.deepcopy(self._wrapped, memo)
 
     # Need to pretend to be the wrapped class, for the sake of objects that care
     # about this (especially in equality tests)
-    def __get_class(self):
-        if self._wrapped is None: self._setup()
-        return self._wrapped.__class__
-    __class__ = property(__get_class)
+    __class__ = property(new_method_proxy(operator.attrgetter("__class__")))
+    __eq__ = new_method_proxy(operator.eq)
+    __hash__ = new_method_proxy(hash)
+    __nonzero__ = new_method_proxy(bool)
 
-    def __eq__(self, other):
-        if self._wrapped is None: self._setup()
-        return self._wrapped == other
 
-    def __hash__(self):
-        if self._wrapped is None: self._setup()
-        return hash(self._wrapped)
-
-    def _setup(self):
-        self._wrapped = self._setupfunc()
+class lazy_property(property):
+    """
+    A property that works with subclasses by wrapping the decorated
+    functions of the base class.
+    """
+    def __new__(cls, fget=None, fset=None, fdel=None, doc=None):
+        if fget is not None:
+            @wraps(fget)
+            def fget(instance, instance_type=None, name=fget.__name__):
+                return getattr(instance, name)()
+        if fset is not None:
+            @wraps(fset)
+            def fset(instance, value, name=fset.__name__):
+                return getattr(instance, name)(value)
+        if fdel is not None:
+            @wraps(fdel)
+            def fdel(instance, name=fdel.__name__):
+                return getattr(instance, name)()
+        return property(fget, fset, fdel, doc)

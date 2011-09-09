@@ -1,8 +1,6 @@
-from datetime import datetime
+from django.db import models
 
 from django.contrib.auth.models import User
-from django.core import management
-from django.db import models
 
 
 # Forward declared intermediate model
@@ -53,3 +51,25 @@ class Through(ThroughBase):
 class B(models.Model):
     b_text = models.CharField(max_length=20)
     a_list = models.ManyToManyField(A, through=Through)
+
+
+# Using to_field on the through model
+class Car(models.Model):
+    make = models.CharField(max_length=20, unique=True)
+    drivers = models.ManyToManyField('Driver', through='CarDriver')
+
+    def __unicode__(self, ):
+        return self.make
+
+class Driver(models.Model):
+    name = models.CharField(max_length=20, unique=True)
+
+    def __unicode__(self, ):
+        return self.name
+
+class CarDriver(models.Model):
+    car = models.ForeignKey('Car', to_field='make')
+    driver = models.ForeignKey('Driver', to_field='name')
+
+    def __unicode__(self, ):
+        return u"pk=%s car=%s driver=%s" % (str(self.pk), self.car, self.driver)

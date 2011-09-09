@@ -83,6 +83,8 @@ the full list of conversions:
 
     ``IPAddressField``               ``IPAddressField``
 
+    ``GenericIPAddressField``        ``GenericIPAddressField``
+
     ``ManyToManyField``              ``ModelMultipleChoiceField`` (see
                                      below)
 
@@ -106,9 +108,6 @@ the full list of conversions:
 
     ``URLField``                     ``URLField`` with ``verify_exists`` set
                                      to the model field's ``verify_exists``
-
-    ``XMLField``                     ``CharField`` with
-                                     ``widget=forms.Textarea``
     ===============================  ========================================
 
 .. versionadded:: 1.2
@@ -185,6 +184,8 @@ With these models, the ``ModelForm`` subclasses above would be roughly
 equivalent to this (the only difference being the ``save()`` method, which
 we'll discuss in a moment.)::
 
+    from django import forms
+
     class AuthorForm(forms.Form):
         name = forms.CharField(max_length=100)
         title = forms.CharField(max_length=3,
@@ -198,14 +199,11 @@ we'll discuss in a moment.)::
 The ``is_valid()`` method and ``errors``
 ----------------------------------------
 
-.. versionchanged:: 1.2
-
 The first time you call ``is_valid()`` or access the ``errors`` attribute of a
-``ModelForm`` has always triggered form validation, but as of Django 1.2, it
-will also trigger :ref:`model validation <validating-objects>`. This has the
-side-effect of cleaning the model you pass to the ``ModelForm`` constructor.
-For instance, calling ``is_valid()`` on your form will convert any date fields
-on your model to actual date objects.
+``ModelForm`` triggers form validation as well as :ref:`model validation
+<validating-objects>`. This has the side-effect of cleaning the model you pass
+to the ``ModelForm`` constructor. For instance, calling ``is_valid()`` on your
+form will convert any date fields on your model to actual date objects.
 
 
 The ``save()`` method
@@ -362,7 +360,7 @@ Overriding the default field types or widgets
 ---------------------------------------------
 
 .. versionadded:: 1.2
- 	The ``widgets`` attribute is new in Django 1.2.
+    The ``widgets`` attribute is new in Django 1.2.
 
 The default field types, as described in the `Field types`_ table above, are
 sensible defaults. If you have a ``DateField`` in your model, chances are you'd
@@ -715,7 +713,7 @@ Overiding ``clean()`` on a ``model_formset``
 Just like with ``ModelForms``, by default the ``clean()`` method of a
 ``model_formset`` will validate that none of the items in the formset violate
 the unique constraints on your model (either ``unique``, ``unique_together`` or
-``unique_for_date|month|year``).  If you want to overide the ``clean()`` method
+``unique_for_date|month|year``).  If you want to override the ``clean()`` method
 on a ``model_formset`` and maintain this validation, you must call the parent
 class's ``clean`` method::
 
@@ -834,6 +832,10 @@ a particular author, you could do this::
 .. note::
     ``inlineformset_factory`` uses ``modelformset_factory`` and marks
     ``can_delete=True``.
+
+.. seealso::
+
+    :ref:`Manually rendered can_delete and can_order <manually-rendered-can-delete-and-can-order>`.
 
 More than one foreign key to the same model
 -------------------------------------------

@@ -28,9 +28,9 @@ class CZPostalCodeField(RegexField):
         'invalid': _(u'Enter a postal code in the format XXXXX or XXX XX.'),
     }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, max_length=None, min_length=None, *args, **kwargs):
         super(CZPostalCodeField, self).__init__(r'^\d{5}$|^\d{3} \d{2}$',
-            max_length=None, min_length=None, *args, **kwargs)
+            max_length, min_length, *args, **kwargs)
 
     def clean(self, value):
         """
@@ -73,7 +73,7 @@ class CZBirthNumberField(Field):
             import warnings
             warnings.warn(
                 "Support for validating the gender of a CZ Birth number has been deprecated.",
-                PendingDeprecationWarning)
+                DeprecationWarning)
             if gender == 'f':
                 female_const = 50
             elif gender == 'm':
@@ -134,7 +134,7 @@ class CZICNumberField(Field):
         # remainder is equal:
         #  0 or 10: last digit is 1
         #  1: last digit is 0
-        # in other case, last digin is 11 - remainder
+        # in other case, last digit is 11 - remainder
 
         if (not remainder % 10 and check == 1) or \
         (remainder == 1 and check == 0) or \

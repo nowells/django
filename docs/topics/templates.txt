@@ -68,7 +68,7 @@ explained later in this document.::
 
     Why use a text-based template instead of an XML-based one (like Zope's
     TAL)? We wanted Django's template language to be usable for more than
-    just XML/HTML templates. At World Online, we use it for e-mails,
+    just XML/HTML templates. At World Online, we use it for emails,
     JavaScript and CSV. You can use the template language for any text-based
     format.
 
@@ -101,8 +101,8 @@ In the above example, ``{{ section.title }}`` will be replaced with the
 ``title`` attribute of the ``section`` object.
 
 If you use a variable that doesn't exist, the template system will insert
-the value of the ``TEMPLATE_STRING_IF_INVALID`` setting, which is set to ``''``
-(the empty string) by default.
+the value of the :setting:`TEMPLATE_STRING_IF_INVALID` setting, which is set
+to ``''`` (the empty string) by default.
 
 Filters
 =======
@@ -259,9 +259,8 @@ defines **blocks** that child templates can override.
 
 It's easiest to understand template inheritance by starting with an example::
 
-    <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
-        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-    <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+    <!DOCTYPE html>
+    <html lang="en">
     <head>
         <link rel="stylesheet" href="style.css" />
         <title>{% block title %}My amazing site{% endblock %}</title>
@@ -313,9 +312,8 @@ in ``base.html`` and replace those blocks with the contents of the child
 template. Depending on the value of ``blog_entries``, the output might look
 like::
 
-    <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
-        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-    <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+    <!DOCTYPE html>
+    <html lang="en">
     <head>
         <link rel="stylesheet" href="style.css" />
         <title>My amazing blog</title>
@@ -473,7 +471,7 @@ contain data that you *intend* to be rendered as raw HTML, in which case you
 don't want their contents to be escaped. For example, you might store a blob of
 HTML in your database and want to embed that directly into your template. Or,
 you might be using Django's template system to produce text that is *not* HTML
--- like an e-mail message, for instance.
+-- like an email message, for instance.
 
 For individual variables
 ~~~~~~~~~~~~~~~~~~~~~~~~

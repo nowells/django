@@ -3,18 +3,18 @@ PostgreSQL database backend for Django.
 
 Requires psycopg 2: http://initd.org/projects/psycopg2
 """
-
 import sys
 
 from django.db import utils
 from django.db.backends import *
 from django.db.backends.signals import connection_created
-from django.db.backends.postgresql.operations import DatabaseOperations as PostgresqlDatabaseOperations
-from django.db.backends.postgresql.client import DatabaseClient
-from django.db.backends.postgresql.creation import DatabaseCreation
-from django.db.backends.postgresql.version import get_version
+from django.db.backends.postgresql_psycopg2.operations import DatabaseOperations
+from django.db.backends.postgresql_psycopg2.client import DatabaseClient
+from django.db.backends.postgresql_psycopg2.creation import DatabaseCreation
+from django.db.backends.postgresql_psycopg2.version import get_version
 from django.db.backends.postgresql_psycopg2.introspection import DatabaseIntrospection
 from django.utils.safestring import SafeUnicode, SafeString
+from django.utils.log import getLogger
 
 try:
     import psycopg2 as Database
@@ -29,6 +29,8 @@ IntegrityError = Database.IntegrityError
 psycopg2.extensions.register_type(psycopg2.extensions.UNICODE)
 psycopg2.extensions.register_adapter(SafeString, psycopg2.extensions.QuotedString)
 psycopg2.extensions.register_adapter(SafeUnicode, psycopg2.extensions.QuotedString)
+
+logger = getLogger('django.db.backends')
 
 class CursorWrapper(object):
     """
@@ -66,20 +68,13 @@ class CursorWrapper(object):
 
 class DatabaseFeatures(BaseDatabaseFeatures):
     needs_datetime_string_cast = False
-    can_return_id_from_insert = False
+    can_return_id_from_insert = True
     requires_rollback_on_dirty_transaction = True
     has_real_datatype = True
     can_defer_constraint_checks = True
+    has_select_for_update = True
+    has_select_for_update_nowait = True
 
-class DatabaseOperations(PostgresqlDatabaseOperations):
-    def last_executed_query(self, cursor, sql, params):
-        # With psycopg2, cursor objects have a "query" attribute that is the
-        # exact query sent to the database. See docs here:
-        # http://www.initd.org/tracker/psycopg/wiki/psycopg2_documentation#postgresql-status-message-and-executed-query
-        return cursor.query
-
-    def return_insert_id(self):
-        return "RETURNING %s", ()
 
 class DatabaseWrapper(BaseDatabaseWrapper):
     vendor = 'postgresql'
@@ -112,6 +107,39 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         self.creation = DatabaseCreation(self)
         self.introspection = DatabaseIntrospection(self)
         self.validation = BaseDatabaseValidation(self)
+        self._pg_version = None
+
+    def check_constraints(self, table_names=None):
+        """
+        To check constraints, we set constraints to immediate. Then, when, we're done we must ensure they
+        are returned to deferred.
+        """
+        self.cursor().execute('SET CONSTRAINTS ALL IMMEDIATE')
+        self.cursor().execute('SET CONSTRAINTS ALL DEFERRED')
+
+    def close(self):
+        if self.connection is None:
+            return
+
+        try:
+            self.connection.close()
+            self.connection = None
+        except Database.Error:
+            # In some cases (database restart, network connection lost etc...)
+            # the connection to the database is lost without giving Django a
+            # notification. If we don't set self.connection to None, the error
+            # will occur a every request.
+            self.connection = None
+            logger.warning('psycopg2 error while closing the connection.',
+                exc_info=sys.exc_info()
+            )
+            raise
+
+    def _get_pg_version(self):
+        if self._pg_version is None:
+            self._pg_version = get_version(self.connection)
+        return self._pg_version
+    pg_version = property(_get_pg_version)
 
     def _cursor(self):
         new_connection = False
@@ -146,22 +174,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         if new_connection:
             if set_tz:
                 cursor.execute("SET TIME ZONE %s", [settings_dict['TIME_ZONE']])
-            if not hasattr(self, '_version'):
-                self.__class__._version = get_version(cursor)
-            if self._version[0:2] < (8, 0):
-                # No savepoint support for earlier version of PostgreSQL.
-                self.features.uses_savepoints = False
-            if self.features.uses_autocommit:
-                if self._version[0:2] < (8, 2):
-                    # FIXME: Needs extra code to do reliable model insert
-                    # handling, so we forbid it for now.
-                    from django.core.exceptions import ImproperlyConfigured
-                    raise ImproperlyConfigured("You cannot use autocommit=True with PostgreSQL prior to 8.2 at the moment.")
-                else:
-                    # FIXME: Eventually we're enable this by default for
-                    # versions that support it, but, right now, that's hard to
-                    # do without breaking other things (#10509).
-                    self.features.can_return_id_from_insert = True
+            self._get_pg_version()
         return CursorWrapper(cursor)
 
     def _enter_transaction_management(self, managed):

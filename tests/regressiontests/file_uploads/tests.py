@@ -1,5 +1,8 @@
 #! -*- coding: utf-8 -*-
+
+import base64
 import errno
+import hashlib
 import os
 import shutil
 from StringIO import StringIO
@@ -10,7 +13,6 @@ from django.http.multipartparser import MultiPartParser
 from django.test import TestCase, client
 from django.utils import simplejson
 from django.utils import unittest
-from django.utils.hashcompat import sha_constructor
 
 from models import FileModel, temp_storage, UPLOAD_TO
 import uploadhandler
@@ -46,14 +48,38 @@ class FileUploadTests(TestCase):
 
         for key in post_data.keys():
             try:
-                post_data[key + '_hash'] = sha_constructor(post_data[key].read()).hexdigest()
+                post_data[key + '_hash'] = hashlib.sha1(post_data[key].read()).hexdigest()
                 post_data[key].seek(0)
             except AttributeError:
-                post_data[key + '_hash'] = sha_constructor(post_data[key]).hexdigest()
+                post_data[key + '_hash'] = hashlib.sha1(post_data[key]).hexdigest()
 
         response = self.client.post('/file_uploads/verify/', post_data)
 
         self.assertEqual(response.status_code, 200)
+
+    def test_base64_upload(self):
+        test_string = "This data will be transmitted base64-encoded."
+        payload = "\r\n".join([
+            '--' + client.BOUNDARY,
+            'Content-Disposition: form-data; name="file"; filename="test.txt"',
+            'Content-Type: application/octet-stream',
+            'Content-Transfer-Encoding: base64',
+            '',
+            base64.b64encode(test_string),
+            '--' + client.BOUNDARY + '--',
+            '',
+        ])
+        r = {
+            'CONTENT_LENGTH': len(payload),
+            'CONTENT_TYPE':   client.MULTIPART_CONTENT,
+            'PATH_INFO':      "/file_uploads/echo_content/",
+            'REQUEST_METHOD': 'POST',
+            'wsgi.input':     client.FakePayload(payload),
+        }
+        response = self.client.request(**r)
+        received = simplejson.loads(response.content)
+
+        self.assertEqual(received['file'], test_string)
 
     def test_unicode_file_name(self):
         tdir = tempfile.gettempdir()
@@ -148,7 +174,48 @@ class FileUploadTests(TestCase):
             'wsgi.input':     client.FakePayload(payload),
         }
         got = simplejson.loads(self.client.request(**r).content)
-        self.assert_(len(got['file']) < 256, "Got a long file name (%s characters)." % len(got['file']))
+        self.assertTrue(len(got['file']) < 256, "Got a long file name (%s characters)." % len(got['file']))
+
+    def test_truncated_multipart_handled_gracefully(self):
+        """
+        If passed an incomplete multipart message, MultiPartParser does not
+        attempt to read beyond the end of the stream, and simply will handle
+        the part that can be parsed gracefully.
+        """
+        payload = "\r\n".join([
+            '--' + client.BOUNDARY,
+            'Content-Disposition: form-data; name="file"; filename="foo.txt"',
+            'Content-Type: application/octet-stream',
+            '',
+            'file contents'
+            '--' + client.BOUNDARY + '--',
+            '',
+        ])
+        payload = payload[:-10]
+        r = {
+            'CONTENT_LENGTH': len(payload),
+            'CONTENT_TYPE': client.MULTIPART_CONTENT,
+            'PATH_INFO': '/file_uploads/echo/',
+            'REQUEST_METHOD': 'POST',
+            'wsgi.input': client.FakePayload(payload),
+        }
+        got = simplejson.loads(self.client.request(**r).content)
+        self.assertEquals(got, {})
+
+    def test_empty_multipart_handled_gracefully(self):
+        """
+        If passed an empty multipart message, MultiPartParser will return
+        an empty QueryDict.
+        """
+        r = {
+            'CONTENT_LENGTH': 0,
+            'CONTENT_TYPE': client.MULTIPART_CONTENT,
+            'PATH_INFO': '/file_uploads/echo/',
+            'REQUEST_METHOD': 'POST',
+            'wsgi.input': client.FakePayload(''),
+        }
+        got = simplejson.loads(self.client.request(**r).content)
+        self.assertEquals(got, {})
 
     def test_custom_upload_handler(self):
         # A small file (under the 5M quota)
@@ -164,12 +231,12 @@ class FileUploadTests(TestCase):
         # Small file posting should work.
         response = self.client.post('/file_uploads/quota/', {'f': smallfile})
         got = simplejson.loads(response.content)
-        self.assert_('f' in got)
+        self.assertTrue('f' in got)
 
         # Large files don't go through.
         response = self.client.post("/file_uploads/quota/", {'f': bigfile})
         got = simplejson.loads(response.content)
-        self.assert_('f' not in got)
+        self.assertTrue('f' not in got)
 
     def test_broken_custom_upload_handler(self):
         f = tempfile.NamedTemporaryFile()
@@ -252,6 +319,37 @@ class FileUploadTests(TestCase):
             # CustomUploadError is the error that should have been raised
             self.assertEqual(err.__class__, uploadhandler.CustomUploadError)
 
+    def test_filename_case_preservation(self):
+        """
+        The storage backend shouldn't mess with the case of the filenames
+        uploaded.
+        """
+        # Synthesize the contents of a file upload with a mixed case filename
+        # so we don't have to carry such a file in the Django tests source code
+        # tree.
+        vars = {'boundary': 'oUrBoUnDaRyStRiNg'}
+        post_data = [
+            '--%(boundary)s',
+            'Content-Disposition: form-data; name="file_field"; '
+                'filename="MiXeD_cAsE.txt"',
+            'Content-Type: application/octet-stream',
+            '',
+            'file contents\n'
+            '',
+            '--%(boundary)s--\r\n',
+        ]
+        response = self.client.post(
+            '/file_uploads/filename_case/',
+            '\r\n'.join(post_data) % vars,
+            'multipart/form-data; boundary=%(boundary)s' % vars
+        )
+        self.assertEqual(response.status_code, 200)
+        id = int(response.content)
+        obj = FileModel.objects.get(pk=id)
+        # The name of the file uploaded and the file stored in the server-side
+        # shouldn't differ.
+        self.assertEqual(os.path.basename(obj.testfile.path), 'MiXeD_cAsE.txt')
+
 class DirectoryCreationTests(unittest.TestCase):
     """
     Tests for error handling during directory creation
@@ -275,7 +373,7 @@ class DirectoryCreationTests(unittest.TestCase):
         try:
             self.obj.testfile.save('foo.txt', SimpleUploadedFile('foo.txt', 'x'))
         except OSError, err:
-            self.assertEquals(err.errno, errno.EACCES)
+            self.assertEqual(err.errno, errno.EACCES)
         except Exception, err:
             self.fail("OSError [Errno %s] not raised." % errno.EACCES)
 
@@ -289,7 +387,7 @@ class DirectoryCreationTests(unittest.TestCase):
         except IOError, err:
             # The test needs to be done on a specific string as IOError
             # is raised even without the patch (just not early enough)
-            self.assertEquals(err.args[0],
+            self.assertEqual(err.args[0],
                               "%s exists and is not a directory." % UPLOAD_TO)
         except:
             self.fail("IOError not raised")

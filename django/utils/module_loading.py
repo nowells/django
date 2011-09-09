@@ -6,12 +6,21 @@ import sys
 def module_has_submodule(package, module_name):
     """See if 'module' is in 'package'."""
     name = ".".join([package.__name__, module_name])
-    if name in sys.modules:
-        return True
+    try:
+        # None indicates a cached miss; see mark_miss() in Python/import.c.
+        return sys.modules[name] is not None
+    except KeyError:
+        pass
+    try:
+        package_path = package.__path__   # No __path__, then not a package.
+    except AttributeError:
+        # Since the remainder of this function assumes that we're dealing with
+        # a package (module with a __path__), so if it's not, then bail here.
+        return False
     for finder in sys.meta_path:
-        if finder.find_module(name):
+        if finder.find_module(name, package_path):
             return True
-    for entry in package.__path__:  # No __path__, then not a package.
+    for entry in package_path:
         try:
             # Try the cached finder.
             finder = sys.path_importer_cache[entry]

@@ -18,6 +18,7 @@ from django.conf import settings
 from django.core import signals
 from django.core.cache.backends.base import (
     InvalidCacheBackendError, CacheKeyWarning, BaseCache)
+from django.core.exceptions import ImproperlyConfigured
 from django.utils import importlib
 
 try:
@@ -28,8 +29,7 @@ except ImportError:
         # Python 2.6 and greater
         from urlparse import parse_qsl
     except ImportError:
-        # Python 2.5, 2.4.  Works on Python 2.6 but raises
-        # PendingDeprecationWarning
+        # Python 2.5.  Works on Python 2.6 but raises PendingDeprecationWarning
         from cgi import parse_qsl
 
 __all__ = [
@@ -74,11 +74,21 @@ def parse_backend_uri(backend_uri):
     return scheme, host, params
 
 if not settings.CACHES:
-    import warnings
-    warnings.warn(
-        "settings.CACHE_* is deprecated; use settings.CACHES instead.",
-        PendingDeprecationWarning
-    )
+    legacy_backend = getattr(settings, 'CACHE_BACKEND', None)
+    if legacy_backend:
+        import warnings
+        warnings.warn(
+            "settings.CACHE_* is deprecated; use settings.CACHES instead.",
+            DeprecationWarning
+        )
+    else:
+        # The default cache setting is put here so that we
+        # can differentiate between a user who has provided
+        # an explicit CACHE_BACKEND of locmem://, and the
+        # default value. When the deprecation cycle has completed,
+        # the default can be restored to global_settings.py
+        settings.CACHE_BACKEND = 'locmem://'
+
     # Mapping for new-style cache backend api
     backend_classes = {
         'memcached': 'memcached.CacheClass',
@@ -90,6 +100,8 @@ if not settings.CACHES:
     engine, host, params = parse_backend_uri(settings.CACHE_BACKEND)
     if engine in backend_classes:
         engine = 'django.core.cache.backends.%s' % backend_classes[engine]
+    else:
+        engine = '%s.CacheClass' % engine
     defaults = {
         'BACKEND': engine,
         'LOCATION': host,
@@ -109,16 +121,17 @@ def parse_backend_conf(backend, **kwargs):
     conf = settings.CACHES.get(backend, None)
     if conf is not None:
         args = conf.copy()
+        args.update(kwargs)
         backend = args.pop('BACKEND')
         location = args.pop('LOCATION', '')
         return backend, location, args
     else:
-        # Trying to import the given backend, in case it's a dotted path
-        mod_path, cls_name = backend.rsplit('.', 1)
         try:
+            # Trying to import the given backend, in case it's a dotted path
+            mod_path, cls_name = backend.rsplit('.', 1)
             mod = importlib.import_module(mod_path)
             backend_cls = getattr(mod, cls_name)
-        except (AttributeError, ImportError):
+        except (AttributeError, ImportError, ValueError):
             raise InvalidCacheBackendError("Could not find backend '%s'" % backend)
         location = kwargs.pop('LOCATION', '')
         return backend, location, kwargs

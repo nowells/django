@@ -1,26 +1,29 @@
-import types
+import copy
 import sys
+from functools import update_wrapper
 from itertools import izip
+
 import django.db.models.manager     # Imported to register signal handler.
-from django.core.exceptions import ObjectDoesNotExist, MultipleObjectsReturned, FieldError, ValidationError, NON_FIELD_ERRORS
+from django.conf import settings
+from django.core.exceptions import (ObjectDoesNotExist,
+    MultipleObjectsReturned, FieldError, ValidationError, NON_FIELD_ERRORS)
 from django.core import validators
 from django.db.models.fields import AutoField, FieldDoesNotExist
-from django.db.models.fields.related import (OneToOneRel, ManyToOneRel,
+from django.db.models.fields.related import (ManyToOneRel,
     OneToOneField, add_lazy_relation)
+from django.db import (connections, router, transaction, DatabaseError,
+    DEFAULT_DB_ALIAS)
 from django.db.models.query import Q
 from django.db.models.query_utils import DeferredAttribute
 from django.db.models.deletion import Collector
 from django.db.models.options import Options
-from django.db import (connections, router, transaction, DatabaseError,
-    DEFAULT_DB_ALIAS)
 from django.db.models import signals
 from django.db.models.loading import register_models, get_model
 from django.utils.translation import ugettext_lazy as _
-import django.utils.copycompat as copy
-from django.utils.functional import curry, update_wrapper
+from django.utils.functional import curry
 from django.utils.encoding import smart_str, force_unicode
 from django.utils.text import get_text_list, capfirst
-from django.conf import settings
+
 
 class ModelBase(type):
     """
@@ -86,7 +89,8 @@ class ModelBase(type):
                 new_class._base_manager = new_class._base_manager._copy_to_model(new_class)
 
         # Bail out early if we have already created this class.
-        m = get_model(new_class._meta.app_label, name, False)
+        m = get_model(new_class._meta.app_label, name,
+                      seed_cache=False, only_installed=False)
         if m is not None:
             return m
 
@@ -199,7 +203,8 @@ class ModelBase(type):
         # the first time this model tries to register with the framework. There
         # should only be one class for each model, so we always return the
         # registered version.
-        return get_model(new_class._meta.app_label, name, False)
+        return get_model(new_class._meta.app_label, name,
+                         seed_cache=False, only_installed=False)
 
     def copy_managers(cls, base_managers):
         # This is in-place sorting of an Options attribute, but that's fine.
@@ -361,6 +366,7 @@ class Model(object):
                     pass
             if kwargs:
                 raise TypeError("'%s' is an invalid keyword argument for this function" % kwargs.keys()[0])
+        super(Model, self).__init__()
         signals.post_init.send(sender=self.__class__, instance=self)
 
     def __repr__(self):
@@ -386,7 +392,7 @@ class Model(object):
 
     def __reduce__(self):
         """
-        Provide pickling support. Normally, this just dispatches to Python's
+        Provides pickling support. Normally, this just dispatches to Python's
         standard handling. However, for models with deferred field loading, we
         need to do things manually, as they're dynamically created classes and
         only module-level classes can be pickled by the default path.
@@ -395,7 +401,7 @@ class Model(object):
         model = self.__class__
         # The obvious thing to do here is to invoke super().__reduce__()
         # for the non-deferred case. Don't do that.
-        # On Python 2.4, there is something wierd with __reduce__,
+        # On Python 2.4, there is something weird with __reduce__,
         # and as a result, the super call will cause an infinite recursion.
         # See #10547 and #12121.
         defers = []
@@ -648,7 +654,7 @@ class Model(object):
         called from a ModelForm, some fields may have been excluded; we can't
         perform a unique check on a model that is missing fields involved
         in that check.
-        Fields that did not validate should also be exluded, but they need
+        Fields that did not validate should also be excluded, but they need
         to be passed in via the exclude argument.
         """
         if exclude is None:
@@ -740,6 +746,8 @@ class Model(object):
             # there's a ticket to add a date lookup, we can remove this special
             # case if that makes it's way in
             date = getattr(self, unique_for)
+            if date is None:
+                continue
             if lookup_type == 'date':
                 lookup_kwargs['%s__day' % unique_for] = date.day
                 lookup_kwargs['%s__month' % unique_for] = date.month
@@ -775,9 +783,10 @@ class Model(object):
         # A unique field
         if len(unique_check) == 1:
             field_name = unique_check[0]
-            field_label = capfirst(opts.get_field(field_name).verbose_name)
+            field = opts.get_field(field_name)
+            field_label = capfirst(field.verbose_name)
             # Insert the error into the error dict, very sneaky
-            return _(u"%(model_name)s with this %(field_label)s already exists.") %  {
+            return field.error_messages['unique'] %  {
                 'model_name': unicode(model_name),
                 'field_label': unicode(field_label)
             }
@@ -907,10 +916,5 @@ def model_unpickle(model, attrs, factory):
     return cls.__new__(cls)
 model_unpickle.__safe_for_unpickle__ = True
 
-if sys.version_info < (2, 5):
-    # Prior to Python 2.5, Exception was an old-style class
-    def subclass_exception(name, parents, unused):
-        return types.ClassType(name, parents, {})
-else:
-    def subclass_exception(name, parents, module):
-        return type(name, parents, {'__module__': module})
+def subclass_exception(name, parents, module):
+    return type(name, parents, {'__module__': module})
