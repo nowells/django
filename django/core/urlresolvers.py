@@ -360,7 +360,10 @@ class RegexURLResolver(LocaleRegexProvider):
                                         self.app_name or sub_match.app_name,
                                         [self.namespace] + sub_match.namespaces,
                                         )
-                        tried.extend([[pattern] + t for t in sub_tried])
+                        if sub_tried:
+                            tried.extend([[pattern] + t for t in sub_tried])
+                        else:
+                            tried.append([pattern])
                     else:
                         sub_match = pattern.resolve(new_path)
                         if sub_match:
@@ -382,7 +385,7 @@ class RegexURLResolver(LocaleRegexProvider):
                     if sub_tried is not None:
                         tried.extend([[pattern] + t for t in sub_tried])
                     else:
-                        tried.append(pattern)
+                        tried.append([pattern])
             raise Resolver404({'tried': tried, 'path': new_path})
         raise Resolver404({'path' : path})
 
