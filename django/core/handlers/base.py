@@ -111,7 +111,9 @@ class BaseHandler(object):
                                 response = callback(request, *callback_args, **callback_kwargs)
                                 break
                             except urlresolvers.Resolver404:
-                                pass
+                                # If the URL resolver candidate raised a Resolver404,
+                                # allow the URL resolver to pick up where it left off
+                                continue
                             except Exception, e:
                                 # If the view raised an exception, run it through exception
                                 # middleware, and if the exception middleware returns a
@@ -122,6 +124,12 @@ class BaseHandler(object):
                                         break
                                 if response is None:
                                     raise
+
+                        # We need to ensure that we break out of the URL resolver
+                        # search loop, since we found a URL resolver match
+                        # but the matched view did not raise a Resolver404 exception
+                        # so we want to terminate this search now
+                        break
 
                 # Complain if the view returned None (a common error).
                 if response is None:
