@@ -1,4 +1,3 @@
-from unittest import TestCase
 from modeltests.validation import ValidationTestCase
 from models import *
 

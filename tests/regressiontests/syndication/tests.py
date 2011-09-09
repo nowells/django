@@ -1,16 +1,13 @@
-import datetime
-from django.contrib.syndication import feeds, views
+from xml.dom import minidom
+
+from django.contrib.syndication import views
 from django.core.exceptions import ImproperlyConfigured
 from django.test import TestCase
 from django.utils import tzinfo
 from django.utils.feedgenerator import rfc2822_date, rfc3339_date
-from models import Entry
-from xml.dom import minidom
 
-try:
-    set
-except NameError:
-    from sets import Set as set
+from models import Entry
+
 
 class FeedTestCase(TestCase):
     fixtures = ['feeddata.json']
@@ -26,7 +23,7 @@ class FeedTestCase(TestCase):
                 elem.getElementsByTagName(k)[0].firstChild.wholeText, v)
 
     def assertCategories(self, elem, expected):
-        self.assertEqual(set(i.firstChild.wholeText for i in elem.childNodes if i.nodeName == 'category'), set(expected));
+        self.assertEqual(set(i.firstChild.wholeText for i in elem.childNodes if i.nodeName == 'category'), set(expected))
 
 ######################################
 # Feed view
@@ -36,6 +33,7 @@ class SyndicationFeedTest(FeedTestCase):
     """
     Tests for the high-level syndication feed framework.
     """
+    urls = 'regressiontests.syndication.urls'
 
     def test_rss2_feed(self):
         """
@@ -73,7 +71,7 @@ class SyndicationFeedTest(FeedTestCase):
             'ttl': '600',
             'copyright': 'Copyright (c) 2007, Sally Smith',
         })
-        self.assertCategories(chan, ['python', 'django']);
+        self.assertCategories(chan, ['python', 'django'])
 
         # Ensure the content of the channel is correct
         self.assertChildNodeContent(chan, {
@@ -102,7 +100,7 @@ class SyndicationFeedTest(FeedTestCase):
             'pubDate': pub_date,
             'author': 'test@example.com (Sally Smith)',
         })
-        self.assertCategories(items[0], ['python', 'testing']);
+        self.assertCategories(items[0], ['python', 'testing'])
 
         for item in items:
             self.assertChildNodes(item, ['title', 'link', 'description', 'guid', 'category', 'pubDate', 'author'])
@@ -199,7 +197,7 @@ class SyndicationFeedTest(FeedTestCase):
             link = item.getElementsByTagName('link')[0]
             if link.firstChild.wholeText == 'http://example.com/blog/4/':
                 title = item.getElementsByTagName('title')[0]
-                self.assertEquals(title.firstChild.wholeText, u'A &amp; B &lt; C &gt; D')
+                self.assertEqual(title.firstChild.wholeText, u'A &amp; B &lt; C &gt; D')
 
     def test_naive_datetime_conversion(self):
         """
@@ -236,6 +234,25 @@ class SyndicationFeedTest(FeedTestCase):
             if link.getAttribute('rel') == 'self':
                 self.assertEqual(link.getAttribute('href'), 'http://example.com/customfeedurl/')
 
+    def test_secure_urls(self):
+        """
+        Test URLs are prefixed with https:// when feed is requested over HTTPS.
+        """
+        response = self.client.get('/syndication/rss2/', **{
+            'wsgi.url_scheme': 'https',
+        })
+        doc = minidom.parseString(response.content)
+        chan = doc.getElementsByTagName('channel')[0]
+        self.assertEqual(
+            chan.getElementsByTagName('link')[0].firstChild.wholeText[0:5],
+            'https'
+        )
+        atom_link = chan.getElementsByTagName('atom:link')[0]
+        self.assertEqual(atom_link.getAttribute('href')[0:5], 'https')
+        for link in doc.getElementsByTagName('link'):
+            if link.getAttribute('rel') == 'self':
+                self.assertEqual(link.getAttribute('href')[0:5], 'https')
+
     def test_item_link_error(self):
         """
         Test that a ImproperlyConfigured is raised if no link could be found
@@ -271,6 +288,10 @@ class SyndicationFeedTest(FeedTestCase):
             'http://example.com/foo/?arg=value'
         )
         self.assertEqual(
+            views.add_domain('example.com', '/foo/?arg=value', True),
+            'https://example.com/foo/?arg=value'
+        )
+        self.assertEqual(
             views.add_domain('example.com', 'http://djangoproject.com/doc/'),
             'http://djangoproject.com/doc/'
         )
@@ -282,52 +303,3 @@ class SyndicationFeedTest(FeedTestCase):
             views.add_domain('example.com', 'mailto:uhoh@djangoproject.com'),
             'mailto:uhoh@djangoproject.com'
         )
-
-
-######################################
-# Deprecated feeds
-######################################
-
-class DeprecatedSyndicationFeedTest(FeedTestCase):
-    """
-    Tests for the deprecated API (feed() view and the feed_dict etc).
-    """
-
-    def test_empty_feed_dict(self):
-        """
-        Test that an empty feed_dict raises a 404.
-        """
-        response = self.client.get('/syndication/depr-feeds-empty/aware-dates/')
-        self.assertEquals(response.status_code, 404)
-
-    def test_nonexistent_slug(self):
-        """
-        Test that a non-existent slug raises a 404.
-        """
-        response = self.client.get('/syndication/depr-feeds/foobar/')
-        self.assertEquals(response.status_code, 404)
-
-    def test_rss_feed(self):
-        """
-        A simple test for Rss201rev2Feed feeds generated by the deprecated
-        system.
-        """
-        response = self.client.get('/syndication/depr-feeds/rss/')
-        doc = minidom.parseString(response.content)
-        feed = doc.getElementsByTagName('rss')[0]
-        self.assertEqual(feed.getAttribute('version'), '2.0')
-
-        chan = feed.getElementsByTagName('channel')[0]
-        self.assertChildNodes(chan, ['title', 'link', 'description', 'language', 'lastBuildDate', 'item', 'atom:link'])
-
-        items = chan.getElementsByTagName('item')
-        self.assertEqual(len(items), Entry.objects.count())
-
-    def test_complex_base_url(self):
-        """
-        Tests that the base url for a complex feed doesn't raise a 500
-        exception.
-        """
-        response = self.client.get('/syndication/depr-feeds/complex/')
-        self.assertEquals(response.status_code, 404)
-

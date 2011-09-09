@@ -26,6 +26,10 @@ class Command(NoArgsCommand):
         interactive = options.get('interactive')
         show_traceback = options.get('traceback', False)
 
+        # Stealth option -- 'load_initial_data' is used by the testing setup
+        # process to disable initial fixture loading.
+        load_initial_data = options.get('load_initial_data', True)
+
         self.style = no_style()
 
         # Import the 'management' module within each installed app, to register
@@ -136,7 +140,7 @@ class Command(NoArgsCommand):
 
         if verbosity >= 1:
             print "Installing indexes ..."
-        # Install SQL indicies for all newly created models
+        # Install SQL indices for all newly created models
         for app_name, model_list in manifest.items():
             for model in model_list:
                 if model in created_models:
@@ -154,5 +158,7 @@ class Command(NoArgsCommand):
                         else:
                             transaction.commit_unless_managed(using=db)
 
-        from django.core.management import call_command
-        call_command('loaddata', 'initial_data', verbosity=verbosity, database=db)
+        # Load initial_data fixtures (unless that has been disabled)
+        if load_initial_data:
+            from django.core.management import call_command
+            call_command('loaddata', 'initial_data', verbosity=verbosity, database=db)

@@ -1,5 +1,5 @@
-import sys, time
-from django.core import management
+import sys
+import time
 from django.db.backends.creation import BaseDatabaseCreation
 
 TEST_DATABASE_PREFIX = 'test_'
@@ -28,6 +28,7 @@ class DatabaseCreation(BaseDatabaseCreation):
         'IntegerField':                 'NUMBER(11)',
         'BigIntegerField':              'NUMBER(19)',
         'IPAddressField':               'VARCHAR2(15)',
+        'GenericIPAddressField':        'VARCHAR2(39)',
         'NullBooleanField':             'NUMBER(1) CHECK ((%(qn_column)s IN (0,1)) OR (%(qn_column)s IS NULL))',
         'OneToOneField':                'NUMBER(11)',
         'PositiveIntegerField':         'NUMBER(11) CHECK (%(qn_column)s >= 0)',
@@ -39,7 +40,9 @@ class DatabaseCreation(BaseDatabaseCreation):
         'URLField':                     'VARCHAR2(%(max_length)s)',
     }
 
-    remember = {}
+    def __init__(self, connection):
+        self.remember = {}
+        super(DatabaseCreation, self).__init__(connection)
 
     def _create_test_db(self, verbosity=1, autoclobber=False):
         TEST_NAME = self._test_database_name()
@@ -131,9 +134,6 @@ class DatabaseCreation(BaseDatabaseCreation):
             'tblspace_temp': TEST_TBLSPACE_TMP,
         }
 
-        self.remember['user'] = self.connection.settings_dict['USER']
-        self.remember['passwd'] = self.connection.settings_dict['PASSWORD']
-
         cursor = self.connection.cursor()
         time.sleep(1) # To avoid "database is being accessed by other users" errors.
         if self._test_user_create():
@@ -152,7 +152,7 @@ class DatabaseCreation(BaseDatabaseCreation):
         statements = [
             """CREATE TABLESPACE %(tblspace)s
                DATAFILE '%(tblspace)s.dbf' SIZE 20M
-               REUSE AUTOEXTEND ON NEXT 10M MAXSIZE 100M
+               REUSE AUTOEXTEND ON NEXT 10M MAXSIZE 200M
             """,
             """CREATE TEMPORARY TABLESPACE %(tblspace_temp)s
                TEMPFILE '%(tblspace_temp)s.dbf' SIZE 20M
@@ -210,35 +210,13 @@ class DatabaseCreation(BaseDatabaseCreation):
                 name = self.connection.settings_dict['TEST_NAME']
         except AttributeError:
             pass
-        except:
-            raise
         return name
 
     def _test_database_create(self):
-        name = True
-        try:
-            if self.connection.settings_dict['TEST_CREATE']:
-                name = True
-            else:
-                name = False
-        except KeyError:
-            pass
-        except:
-            raise
-        return name
+        return self.connection.settings_dict.get('TEST_CREATE', True)
 
     def _test_user_create(self):
-        name = True
-        try:
-            if self.connection.settings_dict['TEST_USER_CREATE']:
-                name = True
-            else:
-                name = False
-        except KeyError:
-            pass
-        except:
-            raise
-        return name
+        return self.connection.settings_dict.get('TEST_USER_CREATE', True)
 
     def _test_database_user(self):
         name = TEST_DATABASE_PREFIX + self.connection.settings_dict['USER']
@@ -247,8 +225,6 @@ class DatabaseCreation(BaseDatabaseCreation):
                 name = self.connection.settings_dict['TEST_USER']
         except KeyError:
             pass
-        except:
-            raise
         return name
 
     def _test_database_passwd(self):
@@ -258,8 +234,6 @@ class DatabaseCreation(BaseDatabaseCreation):
                 name = self.connection.settings_dict['TEST_PASSWD']
         except KeyError:
             pass
-        except:
-            raise
         return name
 
     def _test_database_tblspace(self):
@@ -269,8 +243,6 @@ class DatabaseCreation(BaseDatabaseCreation):
                 name = self.connection.settings_dict['TEST_TBLSPACE']
         except KeyError:
             pass
-        except:
-            raise
         return name
 
     def _test_database_tblspace_tmp(self):
@@ -280,6 +252,25 @@ class DatabaseCreation(BaseDatabaseCreation):
                 name = self.connection.settings_dict['TEST_TBLSPACE_TMP']
         except KeyError:
             pass
-        except:
-            raise
         return name
+
+    def _get_test_db_name(self):
+        """
+        We need to return the 'production' DB name to get the test DB creation
+        machinery to work. This isn't a great deal in this case because DB
+        names as handled by Django haven't real counterparts in Oracle.
+        """
+        return self.connection.settings_dict['NAME']
+
+    def test_db_signature(self):
+        settings_dict = self.connection.settings_dict
+        return (
+            settings_dict['HOST'],
+            settings_dict['PORT'],
+            settings_dict['ENGINE'],
+            settings_dict['NAME'],
+            self._test_database_user(),
+        )
+
+    def set_autocommit(self):
+        self.connection.connection.autocommit = True

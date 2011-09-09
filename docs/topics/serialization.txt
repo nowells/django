@@ -1,5 +1,3 @@
-.. _topics-serialization:
-
 ==========================
 Serializing Django objects
 ==========================
@@ -39,6 +37,12 @@ This is useful if you want to serialize data directly to a file-like object
 
     out = open("file.xml", "w")
     xml_serializer.serialize(SomeModel.objects.all(), stream=out)
+
+.. note::
+
+    Calling :func:`~django.core.serializers.get_serializer` with an unknown
+    :ref:`format <serialization-formats>` will raise a
+    :class:`~django.core.serializers.SerializerDoesNotExist` exception.
 
 Subset of fields
 ~~~~~~~~~~~~~~~~
@@ -140,10 +144,6 @@ to install third-party Python modules:
 
     ``json``    Serializes to and from JSON_ (using a version of simplejson_
                 bundled with Django).
-
-    ``python``  Translates to and from "simple" Python objects (lists, dicts,
-                strings, etc.).  Not really all that useful on its own, but
-                used as a base for other serializers.
 
     ``yaml``    Serializes to YAML (YAML Ain't a Markup Language). This
                 serializer is only available if PyYAML_ is installed.

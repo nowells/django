@@ -1,25 +1,24 @@
 from django.contrib import auth
 from django.core.exceptions import ImproperlyConfigured
+from django.utils.functional import SimpleLazyObject
 
 
-class LazyUser(object):
-    def __get__(self, request, obj_type=None):
-        if not hasattr(request, '_cached_user'):
-            from django.contrib.auth import get_user
-            request._cached_user = get_user(request)
-        return request._cached_user
+def get_user(request):
+    if not hasattr(request, '_cached_user'):
+        request._cached_user = auth.get_user(request)
+    return request._cached_user
 
 
 class AuthenticationMiddleware(object):
     def process_request(self, request):
         assert hasattr(request, 'session'), "The Django authentication middleware requires session middleware to be installed. Edit your MIDDLEWARE_CLASSES setting to insert 'django.contrib.sessions.middleware.SessionMiddleware'."
-        request.__class__.user = LazyUser()
-        return None
+
+        request.user = SimpleLazyObject(lambda: get_user(request))
 
 
 class RemoteUserMiddleware(object):
     """
-    Middleware for utilizing web-server-provided authentication.
+    Middleware for utilizing Web-server-provided authentication.
 
     If request.user is not authenticated, then this middleware attempts to
     authenticate the username passed in the ``REMOTE_USER`` request header.

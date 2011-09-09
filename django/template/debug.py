@@ -1,4 +1,4 @@
-from django.template import Lexer, Parser, tag_re, NodeList, VariableNode, TemplateSyntaxError
+from django.template.base import Lexer, Parser, tag_re, NodeList, VariableNode, TemplateSyntaxError
 from django.utils.encoding import force_unicode
 from django.utils.html import escape
 from django.utils.safestring import SafeData, EscapeData
@@ -78,7 +78,7 @@ class DebugNodeList(NodeList):
             from sys import exc_info
             wrapped = TemplateSyntaxError(u'Caught %s while rendering: %s' %
                 (e.__class__.__name__, force_unicode(e, errors='replace')))
-            wrapped.source = node.source
+            wrapped.source = getattr(e, 'template_node_source', node.source)
             wrapped.exc_info = exc_info()
             raise wrapped, None, wrapped.exc_info[2]
         return result
@@ -87,7 +87,7 @@ class DebugVariableNode(VariableNode):
     def render(self, context):
         try:
             output = self.filter_expression.resolve(context)
-            output = localize(output)
+            output = localize(output, use_l10n=context.use_l10n)
             output = force_unicode(output)
         except TemplateSyntaxError, e:
             if not hasattr(e, 'source'):

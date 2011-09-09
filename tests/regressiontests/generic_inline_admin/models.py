@@ -5,6 +5,8 @@ from django.contrib.contenttypes.models import ContentType
 
 class Episode(models.Model):
     name = models.CharField(max_length=100)
+    length = models.CharField(max_length=100, blank=True)
+    author = models.CharField(max_length=100, blank=True)
 
 class Media(models.Model):
     """
@@ -14,6 +16,8 @@ class Media(models.Model):
     object_id = models.PositiveIntegerField()
     content_object = generic.GenericForeignKey()
     url = models.URLField(verify_exists=False)
+    description = models.CharField(max_length=100, blank=True)
+    keywords = models.CharField(max_length=100, blank=True)
 
     def __unicode__(self):
         return self.url
@@ -59,28 +63,20 @@ class MediaMaxNumInline(generic.GenericTabularInline):
 
 admin.site.register(EpisodeMaxNum, inlines=[MediaMaxNumInline])
 
-#
-# Generic inline with exclude
-#
-
-class EpisodeExclude(Episode):
-    pass
-
-class MediaExcludeInline(generic.GenericTabularInline):
-    model = Media
-    exclude = ['url']
-
-admin.site.register(EpisodeExclude, inlines=[MediaExcludeInline])
 
 #
 # Generic inline with unique_together
 #
+
+class Category(models.Model):
+    name = models.CharField(max_length=50)
 
 class PhoneNumber(models.Model):
     content_type = models.ForeignKey(ContentType)
     object_id = models.PositiveIntegerField()
     content_object = generic.GenericForeignKey('content_type', 'object_id')
     phone_number = models.CharField(max_length=30)
+    category = models.ForeignKey(Category, null=True, blank=True)
 
     class Meta:
         unique_together = (('content_type', 'object_id', 'phone_number',),)
@@ -93,6 +89,7 @@ class PhoneNumberInline(generic.GenericTabularInline):
     model = PhoneNumber
 
 admin.site.register(Contact, inlines=[PhoneNumberInline])
+admin.site.register(Category)
 
 #
 # Generic inline with can_delete=False

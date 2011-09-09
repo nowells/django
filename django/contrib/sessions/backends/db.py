@@ -1,10 +1,9 @@
 import datetime
-from django.conf import settings
-from django.contrib.sessions.models import Session
 from django.contrib.sessions.backends.base import SessionBase, CreateError
 from django.core.exceptions import SuspiciousOperation
 from django.db import IntegrityError, transaction, router
 from django.utils.encoding import force_unicode
+
 
 class SessionStore(SessionBase):
     """
@@ -76,3 +75,7 @@ class SessionStore(SessionBase):
             Session.objects.get(session_key=session_key).delete()
         except Session.DoesNotExist:
             pass
+
+
+# At bottom to avoid circular import
+from django.contrib.sessions.models import Session

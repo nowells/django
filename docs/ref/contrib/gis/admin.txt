@@ -50,11 +50,11 @@ GeoDjango's admin site
 
    .. attribute:: modifiable
 
-   Defaults to ``False``.  When set to to ``True``, disables editing of
+   Defaults to ``True``.  When set to ``False``, disables editing of
    existing geometry fields in the admin.
 
    .. note::
-   
+
        This is different from adding the geometry field to
        :attr:`~django.contrib.admin.ModelAdmin.readonly_fields`,
        which will only display the WKT of the geometry. Setting

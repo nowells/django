@@ -1,4 +1,5 @@
 import sys
+
 from django.core.management.color import color_style
 from django.utils.itercompat import is_iterable
 
@@ -22,6 +23,7 @@ def get_validation_errors(outfile, app=None):
     from django.db import models, connection
     from django.db.models.loading import get_app_errors
     from django.db.models.fields.related import RelatedObject
+    from django.db.models.deletion import SET_NULL, SET_DEFAULT
 
     e = ModelErrorCollection(outfile)
 
@@ -37,6 +39,12 @@ def get_validation_errors(outfile, app=None):
                 e.add(opts, '"%s": You can\'t use "id" as a field name, because each model automatically gets an "id" field if none of the fields have primary_key=True. You need to either remove/rename your "id" field or add primary_key=True to a field.' % f.name)
             if f.name.endswith('_'):
                 e.add(opts, '"%s": Field names cannot end with underscores, because this would lead to ambiguous queryset filters.' % f.name)
+            if (f.primary_key and f.null and
+                    not connection.features.interprets_empty_strings_as_nulls):
+                # We cannot reliably check this for backends like Oracle which
+                # consider NULL and '' to be equal (and thus set up
+                # character-based fields a little differently).
+                e.add(opts, '"%s": Primary key fields cannot have null=True.' % f.name)
             if isinstance(f, models.CharField):
                 try:
                     max_length = int(f.max_length)
@@ -45,11 +53,14 @@ def get_validation_errors(outfile, app=None):
                 except (ValueError, TypeError):
                     e.add(opts, '"%s": CharFields require a "max_length" attribute that is a positive integer.' % f.name)
             if isinstance(f, models.DecimalField):
+                decimalp_ok, mdigits_ok = False, False
                 decimalp_msg ='"%s": DecimalFields require a "decimal_places" attribute that is a non-negative integer.'
                 try:
                     decimal_places = int(f.decimal_places)
                     if decimal_places < 0:
                         e.add(opts, decimalp_msg % f.name)
+                    else:
+                        decimalp_ok = True
                 except (ValueError, TypeError):
                     e.add(opts, decimalp_msg % f.name)
                 mdigits_msg = '"%s": DecimalFields require a "max_digits" attribute that is a positive integer.'
@@ -57,8 +68,14 @@ def get_validation_errors(outfile, app=None):
                     max_digits = int(f.max_digits)
                     if max_digits <= 0:
                         e.add(opts,  mdigits_msg % f.name)
+                    else:
+                        mdigits_ok = True
                 except (ValueError, TypeError):
                     e.add(opts, mdigits_msg % f.name)
+                invalid_values_msg = '"%s": DecimalFields require a "max_digits" attribute value that is greater than the value of the "decimal_places" attribute.'
+                if decimalp_ok and mdigits_ok:
+                    if decimal_places >= max_digits:
+                        e.add(opts, invalid_values_msg % f.name)
             if isinstance(f, models.FileField) and not f.upload_to:
                 e.add(opts, '"%s": FileFields require an "upload_to" attribute.' % f.name)
             if isinstance(f, models.ImageField):
@@ -84,6 +101,13 @@ def get_validation_errors(outfile, app=None):
 
             # Perform any backend-specific field validation.
             connection.validation.validate_field(e, opts, f)
+
+            # Check if the on_delete behavior is sane
+            if f.rel and hasattr(f.rel, 'on_delete'):
+                if f.rel.on_delete == SET_NULL and not f.null:
+                    e.add(opts, "'%s' specifies on_delete=SET_NULL, but cannot be null." % f.name)
+                elif f.rel.on_delete == SET_DEFAULT and not f.has_default():
+                    e.add(opts, "'%s' specifies on_delete=SET_DEFAULT, but has no default value." % f.name)
 
             # Check to see if the related field will clash with any existing
             # fields, m2m fields, m2m related objects or related objects
@@ -257,7 +281,7 @@ def get_validation_errors(outfile, app=None):
                     continue
                 # Skip ordering in the format field1__field2 (FIXME: checking
                 # this format would be nice, but it's a little fiddly).
-                if '_' in field_name:
+                if '__' in field_name:
                     continue
                 try:
                     opts.get_field(field_name, many_to_many=False)

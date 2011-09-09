@@ -2,8 +2,8 @@
 Form classes
 """
 
+import copy
 from django.core.exceptions import ValidationError
-from django.utils.copycompat import deepcopy
 from django.utils.datastructures import SortedDict
 from django.utils.html import conditional_escape
 from django.utils.encoding import StrAndUnicode, smart_unicode, force_unicode
@@ -18,10 +18,10 @@ __all__ = ('BaseForm', 'Form')
 NON_FIELD_ERRORS = '__all__'
 
 def pretty_name(name):
-    """Converts 'first_name' to 'First name'""" 
-    if not name: 
-        return u'' 
-    return name.replace('_', ' ').capitalize() 
+    """Converts 'first_name' to 'First name'"""
+    if not name:
+        return u''
+    return name.replace('_', ' ').capitalize()
 
 def get_declared_fields(bases, attrs, with_base_fields=True):
     """
@@ -89,7 +89,7 @@ class BaseForm(StrAndUnicode):
         # alter self.fields, we create self.fields here by copying base_fields.
         # Instances should always modify self.fields; they should not modify
         # self.base_fields.
-        self.fields = deepcopy(self.base_fields)
+        self.fields = copy.deepcopy(self.base_fields)
 
     def __unicode__(self):
         return self.as_table()
@@ -268,7 +268,7 @@ class BaseForm(StrAndUnicode):
         self._clean_form()
         self._post_clean()
         if self._errors:
-            delattr(self, 'cleaned_data')
+            del self.cleaned_data
 
     def _clean_fields(self):
         for name, field in self.fields.items():
@@ -423,6 +423,7 @@ class BoundField(StrAndUnicode):
         """
         if not widget:
             widget = self.field.widget
+
         attrs = attrs or {}
         auto_id = self.auto_id
         if auto_id and 'id' not in attrs and 'id' not in widget.attrs:
@@ -430,20 +431,12 @@ class BoundField(StrAndUnicode):
                 attrs['id'] = auto_id
             else:
                 attrs['id'] = self.html_initial_id
-        if not self.form.is_bound:
-            data = self.form.initial.get(self.name, self.field.initial)
-            if callable(data):
-                data = data()
-        else:
-            if isinstance(self.field, FileField) and self.data is None:
-                data = self.form.initial.get(self.name, self.field.initial)
-            else:
-                data = self.data
+
         if not only_initial:
             name = self.html_name
         else:
             name = self.html_initial_name
-        return widget.render(name, data, attrs=attrs)
+        return widget.render(name, self.value(), attrs=attrs)
 
     def as_text(self, attrs=None, **kwargs):
         """
@@ -467,6 +460,21 @@ class BoundField(StrAndUnicode):
         """
         return self.field.widget.value_from_datadict(self.form.data, self.form.files, self.html_name)
     data = property(_data)
+
+    def value(self):
+        """
+        Returns the value for this BoundField, using the initial value if
+        the form is not bound or the data otherwise.
+        """
+        if not self.form.is_bound:
+            data = self.form.initial.get(self.name, self.field.initial)
+            if callable(data):
+                data = data()
+        else:
+            data = self.field.bound_data(
+                self.data, self.form.initial.get(self.name, self.field.initial)
+            )
+        return self.field.prepare_value(data)
 
     def label_tag(self, contents=None, attrs=None):
         """
@@ -514,3 +522,14 @@ class BoundField(StrAndUnicode):
             return self.html_name
         return ''
     auto_id = property(_auto_id)
+
+    def _id_for_label(self):
+        """
+        Wrapper around the field widget's `id_for_label` class method.
+        Useful, for example, for focusing on this field regardless of whether
+        it has a single widget or a MutiWidget.
+        """
+        widget = self.field.widget
+        id_ = widget.attrs.get('id') or self.auto_id
+        return widget.id_for_label(id_)
+    id_for_label = property(_id_for_label)

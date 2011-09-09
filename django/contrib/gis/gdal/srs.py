@@ -26,18 +26,17 @@
   >>> print srs.name
   NAD83 / Texas South Central
 """
-import re
-from ctypes import byref, c_char_p, c_int, c_void_p
+from ctypes import byref, c_char_p, c_int
 
 # Getting the error checking routine and exceptions
 from django.contrib.gis.gdal.base import GDALBase
-from django.contrib.gis.gdal.error import OGRException, SRSException
+from django.contrib.gis.gdal.error import SRSException
 from django.contrib.gis.gdal.prototypes import srs as capi
 
 #### Spatial Reference class. ####
 class SpatialReference(GDALBase):
     """
-    A wrapper for the OGRSpatialReference object.  According to the GDAL website,
+    A wrapper for the OGRSpatialReference object.  According to the GDAL Web site,
     the SpatialReference object "provide[s] services to represent coordinate 
     systems (projections and datums) and to transform between them."
     """

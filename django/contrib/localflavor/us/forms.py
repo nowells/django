@@ -17,9 +17,9 @@ class USZipCodeField(RegexField):
         'invalid': _('Enter a zip code in the format XXXXX or XXXXX-XXXX.'),
     }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, max_length=None, min_length=None, *args, **kwargs):
         super(USZipCodeField, self).__init__(r'^\d{5}(?:-\d{4})?$',
-            max_length=None, min_length=None, *args, **kwargs)
+            max_length, min_length, *args, **kwargs)
 
 class USPhoneNumberField(CharField):
     default_error_messages = {
@@ -111,3 +111,12 @@ class USStateSelect(Select):
     def __init__(self, attrs=None):
         from us_states import STATE_CHOICES
         super(USStateSelect, self).__init__(attrs, choices=STATE_CHOICES)
+
+class USPSSelect(Select):
+    """
+    A Select widget that uses a list of US Postal Service codes as its
+    choices.
+    """
+    def __init__(self, attrs=None):
+        from us_states import USPS_CHOICES
+        super(USPSSelect, self).__init__(attrs, choices=USPS_CHOICES)

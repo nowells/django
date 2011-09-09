@@ -1,5 +1,3 @@
-.. _topics-http-index:
-
 Handling HTTP requests
 ======================
 
@@ -10,6 +8,7 @@ Information on handling HTTP requests in Django:
    
    urls
    views
+   decorators
    file-uploads
    shortcuts
    generic-views

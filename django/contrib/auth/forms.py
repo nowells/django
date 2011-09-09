@@ -1,11 +1,15 @@
+from django import forms
+from django.template import loader
+from django.utils.http import int_to_base36
+from django.utils.itercompat import any
+from django.utils.translation import ugettext_lazy as _
+
 from django.contrib.auth.models import User
+from django.contrib.auth.utils import UNUSABLE_PASSWORD
 from django.contrib.auth import authenticate
 from django.contrib.auth.tokens import default_token_generator
-from django.contrib.sites.models import Site
-from django.template import Context, loader
-from django import forms
-from django.utils.translation import ugettext_lazy as _
-from django.utils.http import int_to_base36
+from django.contrib.sites.models import get_current_site
+
 
 class UserCreationForm(forms.ModelForm):
     """
@@ -52,6 +56,12 @@ class UserChangeForm(forms.ModelForm):
     class Meta:
         model = User
 
+    def __init__(self, *args, **kwargs):
+        super(UserChangeForm, self).__init__(*args, **kwargs)
+        f = self.fields.get('user_permissions', None)
+        if f is not None:
+            f.queryset = f.queryset.select_related('content_type')
+
 class AuthenticationForm(forms.Form):
     """
     Base class for authenticating users. Extend this to get a form that accepts
@@ -81,13 +91,14 @@ class AuthenticationForm(forms.Form):
                 raise forms.ValidationError(_("Please enter a correct username and password. Note that both fields are case-sensitive."))
             elif not self.user_cache.is_active:
                 raise forms.ValidationError(_("This account is inactive."))
-
-        # TODO: determine whether this should move to its own method.
-        if self.request:
-            if not self.request.session.test_cookie_worked():
-                raise forms.ValidationError(_("Your Web browser doesn't appear to have cookies enabled. Cookies are required for logging in."))
-
+        self.check_for_test_cookie()
         return self.cleaned_data
+
+    def check_for_test_cookie(self):
+        if self.request and not self.request.session.test_cookie_worked():
+            raise forms.ValidationError(
+                _("Your Web browser doesn't appear to have cookies enabled. "
+                  "Cookies are required for logging in."))
 
     def get_user_id(self):
         if self.user_cache:
@@ -102,28 +113,34 @@ class PasswordResetForm(forms.Form):
 
     def clean_email(self):
         """
-        Validates that a user exists with the given e-mail address.
+        Validates that an active user exists with the given email address.
         """
         email = self.cleaned_data["email"]
-        self.users_cache = User.objects.filter(email__iexact=email)
-        if len(self.users_cache) == 0:
+        self.users_cache = User.objects.filter(
+                                email__iexact=email,
+                                is_active=True)
+        if not len(self.users_cache):
             raise forms.ValidationError(_("That e-mail address doesn't have an associated user account. Are you sure you've registered?"))
+        if any((user.password == UNUSABLE_PASSWORD) for user in self.users_cache):
+            raise forms.ValidationError(_("The user account associated with this e-mail address cannot reset the password."))
         return email
 
-    def save(self, domain_override=None, email_template_name='registration/password_reset_email.html',
-             use_https=False, token_generator=default_token_generator):
+    def save(self, domain_override=None,
+             subject_template_name='registration/password_reset_subject.txt',
+             email_template_name='registration/password_reset_email.html',
+             use_https=False, token_generator=default_token_generator,
+             from_email=None, request=None):
         """
         Generates a one-use only link for resetting password and sends to the user
         """
         from django.core.mail import send_mail
         for user in self.users_cache:
             if not domain_override:
-                current_site = Site.objects.get_current()
+                current_site = get_current_site(request)
                 site_name = current_site.name
                 domain = current_site.domain
             else:
                 site_name = domain = domain_override
-            t = loader.get_template(email_template_name)
             c = {
                 'email': user.email,
                 'domain': domain,
@@ -133,8 +150,11 @@ class PasswordResetForm(forms.Form):
                 'token': token_generator.make_token(user),
                 'protocol': use_https and 'https' or 'http',
             }
-            send_mail(_("Password reset on %s") % site_name,
-                t.render(Context(c)), None, [user.email])
+            subject = loader.render_to_string(subject_template_name, c)
+            # Email subject *must not* contain newlines
+            subject = ''.join(subject.splitlines())
+            email = loader.render_to_string(email_template_name, c)
+            send_mail(subject, email, from_email, [user.email])
 
 class SetPasswordForm(forms.Form):
     """

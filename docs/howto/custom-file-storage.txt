@@ -1,5 +1,3 @@
-.. _howto-custom-file-storage:
-
 Writing a custom storage system
 ===============================
 
@@ -37,7 +35,7 @@ You'll need to follow these steps:
    the ``path()`` method.
 
 Your custom storage system may override any of the storage methods explained in
-:ref:`ref-files-storage`, but you **must** implement the following methods:
+:doc:`/ref/files/storage`, but you **must** implement the following methods:
 
     * :meth:`Storage.delete`
     * :meth:`Storage.exists`
@@ -63,14 +61,14 @@ backend storage system.
 
 Called by ``Storage.save()``. The ``name`` will already have gone through
 ``get_valid_name()`` and ``get_available_name()``, and the ``content`` will be a
-``File`` object itself. 
+``File`` object itself.
 
 Should return the actual name of name of the file saved (usually the ``name``
 passed in, but if the storage needs to change the file name return the new name
 instead).
 
 ``get_valid_name(name)``
-------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 Returns a filename suitable for use with the underlying storage system. The
 ``name`` argument passed to this method is the original filename sent to the
@@ -81,7 +79,7 @@ The code provided on ``Storage`` retains only alpha-numeric characters, periods
 and underscores from the original filename, removing everything else.
 
 ``get_available_name(name)``
-----------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Returns a filename that is available in the storage mechanism, possibly taking
 the provided filename into account. The ``name`` argument passed to this method

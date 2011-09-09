@@ -1,12 +1,12 @@
 """
 SQLite3 backend for django.
 
-Python 2.4 requires pysqlite2 (http://pysqlite.org/).
-
-Python 2.5 and later can use a pysqlite2 module or the sqlite3 module in the
+Works with either the pysqlite2 module or the sqlite3 module in the
 standard library.
 """
 
+import datetime
+import decimal
 import re
 import sys
 
@@ -24,14 +24,8 @@ try:
     except ImportError, e1:
         from sqlite3 import dbapi2 as Database
 except ImportError, exc:
-    import sys
     from django.core.exceptions import ImproperlyConfigured
-    if sys.version_info < (2, 5, 0):
-        module = 'pysqlite2 module'
-        exc = e1
-    else:
-        module = 'either pysqlite2 or sqlite3 modules (tried in that order)'
-    raise ImproperlyConfigured("Error loading %s: %s" % (module, exc))
+    raise ImproperlyConfigured("Error loading either pysqlite2 or sqlite3 modules (tried in that order): %s" % exc)
 
 
 DatabaseError = Database.DatabaseError
@@ -60,6 +54,28 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     # setting ensures we always read result sets fully into memory all in one
     # go.
     can_use_chunked_reads = False
+    test_db_allows_multiple_connections = False
+    supports_unspecified_pk = True
+    supports_1000_query_parameters = False
+    supports_mixed_date_datetime_comparisons = False
+
+    def _supports_stddev(self):
+        """Confirm support for STDDEV and related stats functions
+
+        SQLite supports STDDEV as an extension package; so
+        connection.ops.check_aggregate_support() can't unilaterally
+        rule out support for STDDEV. We need to manually check
+        whether the call works.
+        """
+        cursor = self.connection.cursor()
+        cursor.execute('CREATE TABLE STDDEV_TEST (X INT)')
+        try:
+            cursor.execute('SELECT STDDEV(*) FROM STDDEV_TEST')
+            has_support = True
+        except utils.DatabaseError:
+            has_support = False
+        cursor.execute('DROP TABLE STDDEV_TEST')
+        return has_support
 
 class DatabaseOperations(BaseDatabaseOperations):
     def date_extract_sql(self, lookup_type, field_name):
@@ -68,6 +84,16 @@ class DatabaseOperations(BaseDatabaseOperations):
         # single quotes are used because this is a string (and could otherwise
         # cause a collision with a field name).
         return "django_extract('%s', %s)" % (lookup_type.lower(), field_name)
+
+    def date_interval_sql(self, sql, connector, timedelta):
+        # It would be more straightforward if we could use the sqlite strftime
+        # function, but it does not allow for keeping six digits of fractional
+        # second information, nor does it allow for formatting date and datetime
+        # values differently. So instead we register our own function that
+        # formats the datetime combined with the delta in a manner suitable
+        # for comparisons.
+        return  u'django_format_dtdelta(%s, "%s", "%d", "%d", "%d")' % (sql,
+            connector, timedelta.days, timedelta.seconds, timedelta.microseconds)
 
     def date_trunc_sql(self, lookup_type, field_name):
         # sqlite doesn't support DATE_TRUNC, so we fake it with a user-defined
@@ -129,7 +155,7 @@ class DatabaseOperations(BaseDatabaseOperations):
         return value
 
 class DatabaseWrapper(BaseDatabaseWrapper):
-
+    vendor = 'sqlite'
     # SQLite requires LIKE statements to include an ESCAPE clause if the value
     # being escaped has a percent or underscore in it.
     # See http://www.sqlite.org/lang_expr.html for an explanation.
@@ -153,8 +179,8 @@ class DatabaseWrapper(BaseDatabaseWrapper):
     def __init__(self, *args, **kwargs):
         super(DatabaseWrapper, self).__init__(*args, **kwargs)
 
-        self.features = DatabaseFeatures()
-        self.ops = DatabaseOperations()
+        self.features = DatabaseFeatures(self)
+        self.ops = DatabaseOperations(self)
         self.client = DatabaseClient(self)
         self.creation = DatabaseCreation(self)
         self.introspection = DatabaseIntrospection(self)
@@ -176,8 +202,43 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             self.connection.create_function("django_extract", 2, _sqlite_extract)
             self.connection.create_function("django_date_trunc", 2, _sqlite_date_trunc)
             self.connection.create_function("regexp", 2, _sqlite_regexp)
-            connection_created.send(sender=self.__class__)
+            self.connection.create_function("django_format_dtdelta", 5, _sqlite_format_dtdelta)
+            connection_created.send(sender=self.__class__, connection=self)
         return self.connection.cursor(factory=SQLiteCursorWrapper)
+
+    def check_constraints(self, table_names=None):
+        """
+        Checks each table name in `table_names` for rows with invalid foreign key references. This method is
+        intended to be used in conjunction with `disable_constraint_checking()` and `enable_constraint_checking()`, to
+        determine if rows with invalid references were entered while constraint checks were off.
+
+        Raises an IntegrityError on the first invalid foreign key reference encountered (if any) and provides
+        detailed information about the invalid reference in the error message.
+
+        Backends can override this method if they can more directly apply constraint checking (e.g. via "SET CONSTRAINTS
+        ALL IMMEDIATE")
+        """
+        cursor = self.cursor()
+        if table_names is None:
+            table_names = self.introspection.get_table_list(cursor)
+        for table_name in table_names:
+            primary_key_column_name = self.introspection.get_primary_key_column(cursor, table_name)
+            if not primary_key_column_name:
+                continue
+            key_columns = self.introspection.get_key_columns(cursor, table_name)
+            for column_name, referenced_table_name, referenced_column_name in key_columns:
+                cursor.execute("""
+                    SELECT REFERRING.`%s`, REFERRING.`%s` FROM `%s` as REFERRING
+                    LEFT JOIN `%s` as REFERRED
+                    ON (REFERRING.`%s` = REFERRED.`%s`)
+                    WHERE REFERRING.`%s` IS NOT NULL AND REFERRED.`%s` IS NULL"""
+                    % (primary_key_column_name, column_name, table_name, referenced_table_name,
+                    column_name, referenced_column_name, column_name, referenced_column_name))
+                for bad_row in cursor.fetchall():
+                    raise utils.IntegrityError("The row in table '%s' with primary key '%s' has an invalid "
+                        "foreign key: %s.%s contains a value '%s' that does not have a corresponding value in %s.%s."
+                        % (table_name, bad_row[0], table_name, column_name, bad_row[1],
+                        referenced_table_name, referenced_column_name))
 
     def close(self):
         # If database is in memory, closing the connection destroys the
@@ -186,7 +247,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         if self.settings_dict['NAME'] != ":memory:":
             BaseDatabaseWrapper.close(self)
 
-FORMAT_QMARK_REGEX = re.compile(r'(?![^%])%s')
+FORMAT_QMARK_REGEX = re.compile(r'(?<!%)%s')
 
 class SQLiteCursorWrapper(Database.Cursor):
     """
@@ -238,6 +299,25 @@ def _sqlite_date_trunc(lookup_type, dt):
         return "%i-%02i-01 00:00:00" % (dt.year, dt.month)
     elif lookup_type == 'day':
         return "%i-%02i-%02i 00:00:00" % (dt.year, dt.month, dt.day)
+
+def _sqlite_format_dtdelta(dt, conn, days, secs, usecs):
+    try:
+        dt = util.typecast_timestamp(dt)
+        delta = datetime.timedelta(int(days), int(secs), int(usecs))
+        if conn.strip() == '+':
+            dt = dt + delta
+        else:
+            dt = dt - delta
+    except (ValueError, TypeError):
+        return None
+
+    if isinstance(dt, datetime.datetime):
+        rv = dt.strftime("%Y-%m-%d %H:%M:%S")
+        if dt.microsecond:
+            rv = "%s.%0.6d" % (rv, dt.microsecond)
+    else:
+        rv = dt.strftime("%Y-%m-%d")
+    return rv
 
 def _sqlite_regexp(re_pattern, re_string):
     import re

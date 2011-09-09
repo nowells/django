@@ -52,6 +52,9 @@ class BigIntegerData(models.Model):
 class IPAddressData(models.Model):
     data = models.IPAddressField(null=True)
 
+class GenericIPAddressData(models.Model):
+    data = models.GenericIPAddressField(null=True)
+
 class NullBooleanData(models.Model):
     data = models.NullBooleanField(null=True)
 
@@ -78,9 +81,6 @@ class TimeData(models.Model):
 
 class USStateData(models.Model):
     data = USStateField(null=True)
-
-class XMLData(models.Model):
-    data = models.XMLField(null=True)
 
 class Tag(models.Model):
     """A tag on an item."""
@@ -190,6 +190,9 @@ class IntegerPKData(models.Model):
 class IPAddressPKData(models.Model):
     data = models.IPAddressField(primary_key=True)
 
+class GenericIPAddressPKData(models.Model):
+    data = models.GenericIPAddressField(primary_key=True)
+
 # This is just a Boolean field with null=True, and we can't test a PK value of NULL.
 # class NullBooleanPKData(models.Model):
 #     data = models.NullBooleanField(primary_key=True)
@@ -217,9 +220,6 @@ class SmallPKData(models.Model):
 
 class USStatePKData(models.Model):
     data = USStateField(primary_key=True)
-
-# class XMLPKData(models.Model):
-#     data = models.XMLField(primary_key=True)
 
 class ComplexModel(models.Model):
     field1 = models.CharField(max_length=10)

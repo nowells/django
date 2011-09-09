@@ -1,6 +1,6 @@
 from xml.dom.minidom import parseString
 
-from django.core.mail import EmailMessage, SMTPConnection
+from django.core import mail
 from django.template import Context, Template
 from django.http import HttpResponse, HttpResponseRedirect, HttpResponseNotFound
 from django.contrib.auth.decorators import login_required, permission_required
@@ -38,7 +38,7 @@ def view_with_header(request):
     response = HttpResponse()
     response['X-DJANGO-TEST'] = 'Slartibartfast'
     return response
-        
+
 def raw_post_view(request):
     """A view which expects raw XML to be posted and returns content extracted
     from the XML"""
@@ -139,11 +139,11 @@ def login_protected_view_changed_redirect(request):
     "A simple view that is login protected with a custom redirect field set"
     t = Template('This is a login protected test. Username is {{ user.username }}.', name='Login Template')
     c = Context({'user': request.user})
-    
+
     return HttpResponse(t.render(c))
 login_protected_view_changed_redirect = login_required(redirect_field_name="redirect_to")(login_protected_view_changed_redirect)
 
-def permission_protected_view(request):
+def _permission_protected_view(request):
     "A simple view that is permission protected."
     t = Template('This is a permission protected test. '
                  'Username is {{ user.username }}. '
@@ -151,7 +151,8 @@ def permission_protected_view(request):
                  name='Permissions Template')
     c = Context({'user': request.user})
     return HttpResponse(t.render(c))
-permission_protected_view = permission_required('modeltests.test_perm')(permission_protected_view)
+permission_protected_view = permission_required('modeltests.test_perm')(_permission_protected_view)
+permission_protected_view_exception = permission_required('modeltests.test_perm', raise_exception=True)(_permission_protected_view)
 
 class _ViewManager(object):
     @method_decorator(login_required)
@@ -189,7 +190,7 @@ def broken_view(request):
     raise KeyError("Oops! Looks like you wrote some bad code.")
 
 def mail_sending_view(request):
-    EmailMessage(
+    mail.EmailMessage(
         "Test message",
         "This is a test email",
         "from@example.com",
@@ -197,18 +198,18 @@ def mail_sending_view(request):
     return HttpResponse("Mail sent")
 
 def mass_mail_sending_view(request):
-    m1 = EmailMessage(
+    m1 = mail.EmailMessage(
         'First Test message',
         'This is the first test email',
         'from@example.com',
         ['first@example.com', 'second@example.com'])
-    m2 = EmailMessage(
+    m2 = mail.EmailMessage(
         'Second Test message',
         'This is the second test email',
         'from@example.com',
         ['second@example.com', 'third@example.com'])
 
-    c = SMTPConnection()
+    c = mail.get_connection()
     c.send_messages([m1,m2])
 
     return HttpResponse("Mail sent")

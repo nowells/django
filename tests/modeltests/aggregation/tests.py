@@ -2,23 +2,10 @@ import datetime
 from decimal import Decimal
 
 from django.db.models import Avg, Sum, Count, Max, Min
-from django.test import TestCase
+from django.test import TestCase, Approximate
 
 from models import Author, Publisher, Book, Store
 
-
-class Approximate(object):
-    def __init__(self, val, places=7):
-        self.val = val
-        self.places = places
-
-    def __repr__(self):
-        return repr(self.val)
-
-    def __eq__(self, other):
-        if self.val == other:
-            return True
-        return round(abs(self.val-other), self.places) == 0
 
 class BaseAggregateTestCase(TestCase):
     fixtures = ["initial_data.json"]
@@ -54,7 +41,7 @@ class BaseAggregateTestCase(TestCase):
 
         vals = Book.objects.aggregate(Sum("publisher__num_awards"))
         self.assertEqual(len(vals), 1)
-        self.assertEquals(vals["publisher__num_awards__sum"], 30)
+        self.assertEqual(vals["publisher__num_awards__sum"], 30)
 
         vals = Publisher.objects.aggregate(Sum("book__price"))
         self.assertEqual(len(vals), 1)

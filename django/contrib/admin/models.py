@@ -23,7 +23,9 @@ class LogEntry(models.Model):
     object_repr = models.CharField(_('object repr'), max_length=200)
     action_flag = models.PositiveSmallIntegerField(_('action flag'))
     change_message = models.TextField(_('change message'), blank=True)
+
     objects = LogEntryManager()
+
     class Meta:
         verbose_name = _('log entry')
         verbose_name_plural = _('log entries')
@@ -32,6 +34,16 @@ class LogEntry(models.Model):
 
     def __repr__(self):
         return smart_unicode(self.action_time)
+
+    def __unicode__(self):
+        if self.action_flag == ADDITION:
+            return _('Added "%(object)s".') % {'object': self.object_repr}
+        elif self.action_flag == CHANGE:
+            return _('Changed "%(object)s" - %(changes)s') % {'object': self.object_repr, 'changes': self.change_message}
+        elif self.action_flag == DELETION:
+            return _('Deleted "%(object)s."') % {'object': self.object_repr}
+
+        return _('LogEntry Object')
 
     def is_addition(self):
         return self.action_flag == ADDITION
@@ -51,4 +63,6 @@ class LogEntry(models.Model):
         Returns the admin URL to edit the object represented by this log entry.
         This is relative to the Django admin index page.
         """
-        return mark_safe(u"%s/%s/%s/" % (self.content_type.app_label, self.content_type.model, quote(self.object_id)))
+        if self.content_type and self.object_id:
+            return mark_safe(u"%s/%s/%s/" % (self.content_type.app_label, self.content_type.model, quote(self.object_id)))
+        return None

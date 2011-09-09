@@ -1,4 +1,8 @@
-from django import template, templatetags
+import inspect
+import os
+import re
+
+from django import template
 from django.template import RequestContext
 from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
@@ -12,7 +16,6 @@ from django.contrib.sites.models import Site
 from django.utils.importlib import import_module
 from django.utils.translation import ugettext as _
 from django.utils.safestring import mark_safe
-import inspect, os, re
 
 # Exclude methods starting with these strings from documentation
 MODEL_METHODS_EXCLUDE = ('_', 'add_', 'delete', 'save', 'set_')
@@ -25,28 +28,25 @@ def get_root_path():
     try:
         return urlresolvers.reverse('admin:index')
     except urlresolvers.NoReverseMatch:
-        from django.contrib import admin
-        try:
-            return urlresolvers.reverse(admin.site.root, args=[''])
-        except urlresolvers.NoReverseMatch:
-            return getattr(settings, "ADMIN_SITE_ROOT_URL", "/admin/")
+        return getattr(settings, "ADMIN_SITE_ROOT_URL", "/admin/")
 
+@staff_member_required
 def doc_index(request):
     if not utils.docutils_is_available:
         return missing_docutils_page(request)
     return render_to_response('admin_doc/index.html', {
         'root_path': get_root_path(),
     }, context_instance=RequestContext(request))
-doc_index = staff_member_required(doc_index)
 
+@staff_member_required
 def bookmarklets(request):
     admin_root = get_root_path()
     return render_to_response('admin_doc/bookmarklets.html', {
         'root_path': admin_root,
         'admin_url': mark_safe("%s://%s%s" % (request.is_secure() and 'https' or 'http', request.get_host(), admin_root)),
     }, context_instance=RequestContext(request))
-bookmarklets = staff_member_required(bookmarklets)
 
+@staff_member_required
 def template_tag_index(request):
     if not utils.docutils_is_available:
         return missing_docutils_page(request)
@@ -54,7 +54,9 @@ def template_tag_index(request):
     load_all_installed_template_libraries()
 
     tags = []
-    for module_name, library in template.libraries.items():
+    app_libs = template.libraries.items()
+    builtin_libs = [(None, lib) for lib in template.builtins]
+    for module_name, library in builtin_libs + app_libs:
         for tag_name, tag_func in library.tags.items():
             title, body, metadata = utils.parse_docstring(tag_func.__doc__)
             if title:
@@ -78,8 +80,8 @@ def template_tag_index(request):
         'root_path': get_root_path(),
         'tags': tags
     }, context_instance=RequestContext(request))
-template_tag_index = staff_member_required(template_tag_index)
 
+@staff_member_required
 def template_filter_index(request):
     if not utils.docutils_is_available:
         return missing_docutils_page(request)
@@ -87,7 +89,9 @@ def template_filter_index(request):
     load_all_installed_template_libraries()
 
     filters = []
-    for module_name, library in template.libraries.items():
+    app_libs = template.libraries.items()
+    builtin_libs = [(None, lib) for lib in template.builtins]
+    for module_name, library in builtin_libs + app_libs:
         for filter_name, filter_func in library.filters.items():
             title, body, metadata = utils.parse_docstring(filter_func.__doc__)
             if title:
@@ -111,8 +115,8 @@ def template_filter_index(request):
         'root_path': get_root_path(),
         'filters': filters
     }, context_instance=RequestContext(request))
-template_filter_index = staff_member_required(template_filter_index)
 
+@staff_member_required
 def view_index(request):
     if not utils.docutils_is_available:
         return missing_docutils_page(request)
@@ -142,8 +146,8 @@ def view_index(request):
         'root_path': get_root_path(),
         'views': views
     }, context_instance=RequestContext(request))
-view_index = staff_member_required(view_index)
 
+@staff_member_required
 def view_detail(request, view):
     if not utils.docutils_is_available:
         return missing_docutils_page(request)
@@ -167,8 +171,8 @@ def view_detail(request, view):
         'body': body,
         'meta': metadata,
     }, context_instance=RequestContext(request))
-view_detail = staff_member_required(view_detail)
 
+@staff_member_required
 def model_index(request):
     if not utils.docutils_is_available:
         return missing_docutils_page(request)
@@ -177,8 +181,8 @@ def model_index(request):
         'root_path': get_root_path(),
         'models': m_list
     }, context_instance=RequestContext(request))
-model_index = staff_member_required(model_index)
 
+@staff_member_required
 def model_detail(request, app_label, model_name):
     if not utils.docutils_is_available:
         return missing_docutils_page(request)
@@ -272,8 +276,8 @@ def model_detail(request, app_label, model_name):
         'description': model.__doc__,
         'fields': fields,
     }, context_instance=RequestContext(request))
-model_detail = staff_member_required(model_detail)
 
+@staff_member_required
 def template_detail(request, template):
     templates = []
     for site_settings_module in settings.ADMIN_FOR:
@@ -297,7 +301,6 @@ def template_detail(request, template):
         'name': template,
         'templates': templates,
     }, context_instance=RequestContext(request))
-template_detail = staff_member_required(template_detail)
 
 ####################
 # Helper functions #
@@ -346,17 +349,17 @@ def extract_views_from_urlpatterns(urlpatterns, base=''):
     """
     views = []
     for p in urlpatterns:
-        if hasattr(p, '_get_callback'):
-            try:
-                views.append((p._get_callback(), base + p.regex.pattern))
-            except ViewDoesNotExist:
-                continue
-        elif hasattr(p, '_get_url_patterns'):
+        if hasattr(p, 'url_patterns'):
             try:
                 patterns = p.url_patterns
             except ImportError:
                 continue
             views.extend(extract_views_from_urlpatterns(patterns, base + p.regex.pattern))
+        elif hasattr(p, 'callback'):
+            try:
+                views.append((p.callback, base + p.regex.pattern))
+            except ViewDoesNotExist:
+                continue
         else:
             raise TypeError(_("%s does not appear to be a urlpattern object") % p)
     return views

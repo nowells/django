@@ -2,7 +2,6 @@
 # that don't actually do anything. This is purely for performance, so that
 # settings.USE_I18N = False can use this module rather than trans_real.py.
 
-import warnings
 from django.conf import settings
 from django.utils.encoding import force_unicode
 from django.utils.safestring import mark_safe, SafeData
@@ -14,6 +13,12 @@ ngettext_lazy = ngettext
 
 def ungettext(singular, plural, number):
     return force_unicode(ngettext(singular, plural, number))
+
+def pgettext(context, message):
+    return ugettext(message)
+
+def npgettext(context, singular, plural, number):
+    return ungettext(singular, plural, number)
 
 activate = lambda x: None
 deactivate = deactivate_all = lambda: None
@@ -53,20 +58,6 @@ def to_locale(language):
 def get_language_from_request(request):
     return settings.LANGUAGE_CODE
 
-# get_date_formats and get_partial_date_formats aren't used anymore by Django
-# but are kept for backward compatibility.
-def get_date_formats():
-    warnings.warn(
-        '`django.utils.translation.get_date_formats` is deprecated. '
-        'Please update your code to use the new i18n aware formatting.',
-        PendingDeprecationWarning
-    )
-    return settings.DATE_FORMAT, settings.DATETIME_FORMAT, settings.TIME_FORMAT
+def get_language_from_path(request):
+    return None
 
-def get_partial_date_formats():
-    warnings.warn(
-        '`django.utils.translation.get_partial_date_formats` is deprecated. '
-        'Please update your code to use the new i18n aware formatting.',
-        PendingDeprecationWarning
-    )
-    return settings.YEAR_MONTH_FORMAT, settings.MONTH_DAY_FORMAT

@@ -3,8 +3,9 @@ from django.conf import settings
 
 from django.core.exceptions import ImproperlyConfigured
 from django.db.backends.sqlite3.base import *
-from django.db.backends.sqlite3.base import DatabaseWrapper as SqliteDatabaseWrapper, \
-    _sqlite_extract, _sqlite_date_trunc, _sqlite_regexp
+from django.db.backends.sqlite3.base import (
+    _sqlite_extract, _sqlite_date_trunc, _sqlite_regexp,
+    DatabaseWrapper as SqliteDatabaseWrapper)
 from django.contrib.gis.db.backends.spatialite.client import SpatiaLiteClient
 from django.contrib.gis.db.backends.spatialite.creation import SpatiaLiteCreation
 from django.contrib.gis.db.backends.spatialite.introspection import SpatiaLiteIntrospection
@@ -51,7 +52,7 @@ class DatabaseWrapper(SqliteDatabaseWrapper):
             self.connection.create_function("django_extract", 2, _sqlite_extract)
             self.connection.create_function("django_date_trunc", 2, _sqlite_date_trunc)
             self.connection.create_function("regexp", 2, _sqlite_regexp)
-            connection_created.send(sender=self.__class__)
+            connection_created.send(sender=self.__class__, connection=self)
 
             ## From here on, customized for GeoDjango ##
 

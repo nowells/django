@@ -1,3 +1,7 @@
+# This is necessary in Python 2.5 to enable the with statement, in 2.6
+# and up it is no longer necessary.
+from __future__ import with_statement
+
 import sys
 import os
 import gzip
@@ -47,7 +51,8 @@ class Command(BaseCommand):
 
         # Keep a count of the installed objects and fixtures
         fixture_count = 0
-        object_count = 0
+        loaded_object_count = 0
+        fixture_object_count = 0
         models = set()
 
         humanize = lambda dirname: dirname and "'%s'" % dirname or 'absolute path'
@@ -114,11 +119,12 @@ class Command(BaseCommand):
                 if verbosity >= 2:
                     self.stdout.write("Loading '%s' fixtures...\n" % fixture_name)
             else:
-                sys.stderr.write(
+                self.stderr.write(
                     self.style.ERROR("Problem installing fixture '%s': %s is not a known serialization format.\n" %
                         (fixture_name, format)))
-                transaction.rollback(using=using)
-                transaction.leave_transaction_management(using=using)
+                if commit:
+                    transaction.rollback(using=using)
+                    transaction.leave_transaction_management(using=using)
                 return
 
             if os.path.isabs(fixture_name):
@@ -151,35 +157,48 @@ class Command(BaseCommand):
                             fixture.close()
                             self.stderr.write(self.style.ERROR("Multiple fixtures named '%s' in %s. Aborting.\n" %
                                 (fixture_name, humanize(fixture_dir))))
-                            transaction.rollback(using=using)
-                            transaction.leave_transaction_management(using=using)
+                            if commit:
+                                transaction.rollback(using=using)
+                                transaction.leave_transaction_management(using=using)
                             return
                         else:
                             fixture_count += 1
                             objects_in_fixture = 0
+                            loaded_objects_in_fixture = 0
                             if verbosity >= 2:
                                 self.stdout.write("Installing %s fixture '%s' from %s.\n" % \
                                     (format, fixture_name, humanize(fixture_dir)))
                             try:
                                 objects = serializers.deserialize(format, fixture, using=using)
-                                for obj in objects:
-                                    if router.allow_syncdb(using, obj.object.__class__):
+
+                                with connection.constraint_checks_disabled():
+                                    for obj in objects:
                                         objects_in_fixture += 1
-                                        models.add(obj.object.__class__)
-                                        obj.save(using=using)
-                                object_count += objects_in_fixture
+                                        if router.allow_syncdb(using, obj.object.__class__):
+                                            loaded_objects_in_fixture += 1
+                                            models.add(obj.object.__class__)
+                                            obj.save(using=using)
+
+                                # Since we disabled constraint checks, we must manually check for
+                                # any invalid keys that might have been added
+                                table_names = [model._meta.db_table for model in models]
+                                connection.check_constraints(table_names=table_names)
+
+                                loaded_object_count += loaded_objects_in_fixture
+                                fixture_object_count += objects_in_fixture
                                 label_found = True
                             except (SystemExit, KeyboardInterrupt):
                                 raise
                             except Exception:
                                 import traceback
                                 fixture.close()
-                                transaction.rollback(using=using)
-                                transaction.leave_transaction_management(using=using)
+                                if commit:
+                                    transaction.rollback(using=using)
+                                    transaction.leave_transaction_management(using=using)
                                 if show_traceback:
                                     traceback.print_exc()
                                 else:
-                                    sys.stderr.write(
+                                    self.stderr.write(
                                         self.style.ERROR("Problem installing fixture '%s': %s\n" %
                                              (full_path, ''.join(traceback.format_exception(sys.exc_type,
                                                  sys.exc_value, sys.exc_traceback)))))
@@ -189,11 +208,12 @@ class Command(BaseCommand):
                             # If the fixture we loaded contains 0 objects, assume that an
                             # error was encountered during fixture loading.
                             if objects_in_fixture == 0:
-                                sys.stderr.write(
+                                self.stderr.write(
                                     self.style.ERROR("No fixture data found for '%s'. (File format may be invalid.)\n" %
                                         (fixture_name)))
-                                transaction.rollback(using=using)
-                                transaction.leave_transaction_management(using=using)
+                                if commit:
+                                    transaction.rollback(using=using)
+                                    transaction.leave_transaction_management(using=using)
                                 return
 
                     except Exception, e:
@@ -203,7 +223,7 @@ class Command(BaseCommand):
 
         # If we found even one object in a fixture, we need to reset the
         # database sequences.
-        if object_count > 0:
+        if loaded_object_count > 0:
             sequence_sql = connection.ops.sequence_reset_sql(self.style, models)
             if sequence_sql:
                 if verbosity >= 2:
@@ -215,12 +235,17 @@ class Command(BaseCommand):
             transaction.commit(using=using)
             transaction.leave_transaction_management(using=using)
 
-        if object_count == 0:
+        if fixture_object_count == 0:
             if verbosity >= 1:
                 self.stdout.write("No fixtures found.\n")
         else:
             if verbosity >= 1:
-                self.stdout.write("Installed %d object(s) from %d fixture(s)\n" % (object_count, fixture_count))
+                if fixture_object_count == loaded_object_count:
+                    self.stdout.write("Installed %d object(s) from %d fixture(s)\n" % (
+                        loaded_object_count, fixture_count))
+                else:
+                    self.stdout.write("Installed %d object(s) (of %d) from %d fixture(s)\n" % (
+                        loaded_object_count, fixture_object_count, fixture_count))
 
         # Close the DB connection. This is required as a workaround for an
         # edge case in MySQL: if the same connection is used to

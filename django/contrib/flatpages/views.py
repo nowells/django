@@ -1,7 +1,7 @@
 from django.contrib.flatpages.models import FlatPage
 from django.template import loader, RequestContext
 from django.shortcuts import get_object_or_404
-from django.http import HttpResponse, HttpResponseRedirect
+from django.http import Http404, HttpResponse, HttpResponsePermanentRedirect
 from django.conf import settings
 from django.core.xheaders import populate_xheaders
 from django.utils.safestring import mark_safe
@@ -13,10 +13,13 @@ DEFAULT_TEMPLATE = 'flatpages/default.html'
 # when a 404 is raised, which often means CsrfViewMiddleware.process_view
 # has not been called even if CsrfViewMiddleware is installed. So we need
 # to use @csrf_protect, in case the template needs {% csrf_token %}.
-@csrf_protect
+# However, we can't just wrap this view; if no matching flatpage exists,
+# or a redirect is required for authentication, the 404 needs to be returned
+# without any CSRF checks. Therefore, we only
+# CSRF protect the internal implementation.
 def flatpage(request, url):
     """
-    Flat page view.
+    Public interface to the flat page view.
 
     Models: `flatpages.flatpages`
     Templates: Uses the template defined by the ``template_name`` field,
@@ -25,11 +28,26 @@ def flatpage(request, url):
         flatpage
             `flatpages.flatpages` object
     """
-    if not url.endswith('/') and settings.APPEND_SLASH:
-        return HttpResponseRedirect("%s/" % request.path)
     if not url.startswith('/'):
-        url = "/" + url
-    f = get_object_or_404(FlatPage, url__exact=url, sites__id__exact=settings.SITE_ID)
+        url = '/' + url
+    try:
+        f = get_object_or_404(FlatPage,
+            url__exact=url, sites__id__exact=settings.SITE_ID)
+    except Http404:
+        if not url.endswith('/') and settings.APPEND_SLASH:
+            url += '/'
+            f = get_object_or_404(FlatPage,
+                url__exact=url, sites__id__exact=settings.SITE_ID)
+            return HttpResponsePermanentRedirect('%s/' % request.path)
+        else:
+            raise
+    return render_flatpage(request, f)
+
+@csrf_protect
+def render_flatpage(request, f):
+    """
+    Internal interface to the flat page view.
+    """
     # If registration is required for accessing this page, and the user isn't
     # logged in, redirect to the login page.
     if f.registration_required and not request.user.is_authenticated():

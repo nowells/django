@@ -1,8 +1,6 @@
-from django.core.exceptions import FieldError
 from django.db import models
 from django.utils import simplejson as json
 from django.utils.encoding import force_unicode
-
 
 class Small(object):
     """
@@ -38,7 +36,7 @@ class SmallField(models.Field):
             return value
         return Small(value[0], value[1])
 
-    def get_db_prep_save(self, value):
+    def get_db_prep_save(self, value, connection):
         return unicode(value)
 
     def get_prep_lookup(self, lookup_type, value):
@@ -50,22 +48,25 @@ class SmallField(models.Field):
             return []
         raise TypeError('Invalid lookup type: %r' % lookup_type)
 
+class SmallerField(SmallField):
+    pass
+
 
 class JSONField(models.TextField):
     __metaclass__ = models.SubfieldBase
-    
+
     description = ("JSONField automatically serializes and desializes values to "
         "and from JSON.")
-    
+
     def to_python(self, value):
         if not value:
             return None
-        
+
         if isinstance(value, basestring):
             value = json.loads(value)
         return value
-    
-    def get_db_prep_save(self, value):
+
+    def get_db_prep_save(self, value, connection):
         if value is None:
             return None
         return json.dumps(value)

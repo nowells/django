@@ -7,7 +7,7 @@ databases). The abstraction barrier only works one way: this module has to know
 all about the internals of models in order to get the information it needs.
 """
 
-from django.utils.copycompat import deepcopy
+import copy
 from django.utils.tree import Node
 from django.utils.datastructures import SortedDict
 from django.utils.encoding import force_unicode
@@ -31,7 +31,6 @@ class RawQuery(object):
     """
 
     def __init__(self, sql, using, params=None):
-        self.validate_sql(sql)
         self.params = params or ()
         self.sql = sql
         self.using = using
@@ -62,11 +61,6 @@ class RawQuery(object):
         return [converter(column_meta[0])
                 for column_meta in self.cursor.description]
 
-    def validate_sql(self, sql):
-        if not sql.lower().strip().startswith('select'):
-            raise InvalidQuery('Raw queries are limited to SELECT queries. Use '
-                               'connection.cursor directly for other types of queries.')
-
     def __iter__(self):
         # Always execute a new query for a new iterator.
         # This could be optimized with a cache at the expense of RAM.
@@ -80,7 +74,7 @@ class RawQuery(object):
         return iter(result)
 
     def __repr__(self):
-        return "<RawQuery: %r>" % (self.sql % self.params)
+        return "<RawQuery: %r>" % (self.sql % tuple(self.params))
 
     def _execute_query(self):
         self.cursor = connections[self.using].cursor()
@@ -131,6 +125,8 @@ class Query(object):
         self.order_by = []
         self.low_mark, self.high_mark = 0, None  # Used for offset/limit
         self.distinct = False
+        self.select_for_update = False
+        self.select_for_update_nowait = False
         self.select_related = False
         self.related_select_cols = []
 
@@ -160,13 +156,20 @@ class Query(object):
     def __str__(self):
         """
         Returns the query as a string of SQL with the parameter values
-        substituted in.
+        substituted in (use sql_with_params() to see the unsubstituted string).
 
         Parameter values won't necessarily be quoted correctly, since that is
         done by the database interface at execution time.
         """
-        sql, params = self.get_compiler(DEFAULT_DB_ALIAS).as_sql()
+        sql, params = self.sql_with_params()
         return sql % params
+
+    def sql_with_params(self):
+        """
+        Returns the query as an SQL string and the parameters that will be
+        subsituted into the query.
+        """
+        return self.get_compiler(DEFAULT_DB_ALIAS).as_sql()
 
     def __deepcopy__(self, memo):
         result = self.clone(memo=memo)
@@ -195,8 +198,9 @@ class Query(object):
         Unpickling support.
         """
         # Rebuild list of field instances
+        opts = obj_dict['model']._meta
         obj_dict['select_fields'] = [
-            name is not None and obj_dict['model']._meta.get_field(name) or None
+            name is not None and opts.get_field(name) or None
             for name in obj_dict['select_fields']
         ]
 
@@ -249,19 +253,21 @@ class Query(object):
         obj.dupe_avoidance = self.dupe_avoidance.copy()
         obj.select = self.select[:]
         obj.tables = self.tables[:]
-        obj.where = deepcopy(self.where, memo=memo)
+        obj.where = copy.deepcopy(self.where, memo=memo)
         obj.where_class = self.where_class
         if self.group_by is None:
             obj.group_by = None
         else:
             obj.group_by = self.group_by[:]
-        obj.having = deepcopy(self.having, memo=memo)
+        obj.having = copy.deepcopy(self.having, memo=memo)
         obj.order_by = self.order_by[:]
         obj.low_mark, obj.high_mark = self.low_mark, self.high_mark
         obj.distinct = self.distinct
+        obj.select_for_update = self.select_for_update
+        obj.select_for_update_nowait = self.select_for_update_nowait
         obj.select_related = self.select_related
         obj.related_select_cols = []
-        obj.aggregates = deepcopy(self.aggregates, memo=memo)
+        obj.aggregates = copy.deepcopy(self.aggregates, memo=memo)
         if self.aggregate_select_mask is None:
             obj.aggregate_select_mask = None
         else:
@@ -284,7 +290,7 @@ class Query(object):
             obj._extra_select_cache = self._extra_select_cache.copy()
         obj.extra_tables = self.extra_tables
         obj.extra_order_by = self.extra_order_by
-        obj.deferred_loading = deepcopy(self.deferred_loading, memo=memo)
+        obj.deferred_loading = copy.deepcopy(self.deferred_loading, memo=memo)
         if self.filter_is_sticky and self.used_aliases:
             obj.used_aliases = self.used_aliases.copy()
         else:
@@ -337,7 +343,7 @@ class Query(object):
         # information but retrieves only the first row. Aggregate
         # over the subquery instead.
         if self.group_by is not None:
-            from subqueries import AggregateQuery
+            from django.db.models.sql.subqueries import AggregateQuery
             query = AggregateQuery(self.model)
 
             obj = self.clone()
@@ -349,7 +355,13 @@ class Query(object):
                     query.aggregate_select[alias] = aggregate
                     del obj.aggregate_select[alias]
 
-            query.add_subquery(obj, using)
+            try:
+                query.add_subquery(obj, using)
+            except EmptyResultSet:
+                return dict(
+                    (alias, None)
+                    for alias in query.aggregate_select
+                )
         else:
             query = self
             self.select = []
@@ -359,6 +371,7 @@ class Query(object):
 
         query.clear_ordering(True)
         query.clear_limits()
+        query.select_for_update = False
         query.select_related = False
         query.related_select_cols = []
         query.related_select_fields = []
@@ -382,13 +395,19 @@ class Query(object):
             # If a select clause exists, then the query has already started to
             # specify the columns that are to be returned.
             # In this case, we need to use a subquery to evaluate the count.
-            from subqueries import AggregateQuery
+            from django.db.models.sql.subqueries import AggregateQuery
             subquery = obj
             subquery.clear_ordering(True)
             subquery.clear_limits()
 
             obj = AggregateQuery(obj.model)
-            obj.add_subquery(subquery, using=using)
+            try:
+                obj.add_subquery(subquery, using=using)
+            except EmptyResultSet:
+                # add_subquery evaluates the query, if it's an EmptyResultSet
+                # then there are can be no results, and therefore there the
+                # count is obviously 0
+                return 0
 
         obj.add_count_column()
         number = obj.get_aggregation(using=using)[None]
@@ -443,25 +462,46 @@ class Query(object):
                 # An unused alias.
                 continue
             promote = (rhs.alias_map[alias][JOIN_TYPE] == self.LOUTER)
-            new_alias = self.join(rhs.rev_join_map[alias],
+            lhs, table, lhs_col, col = rhs.rev_join_map[alias]
+            # If the left side of the join was already relabeled, use the
+            # updated alias.
+            lhs = change_map.get(lhs, lhs)
+            new_alias = self.join((lhs, table, lhs_col, col),
                     (conjunction and not first), used, promote, not conjunction)
             used.add(new_alias)
             change_map[alias] = new_alias
             first = False
 
         # So that we don't exclude valid results in an "or" query combination,
-        # the first join that is exclusive to the lhs (self) must be converted
+        # all joins exclusive to either the lhs or the rhs must be converted
         # to an outer join.
         if not conjunction:
-            for alias in self.tables[1:]:
-                if self.alias_refcount[alias] == 1:
+            l_tables = set(self.tables)
+            r_tables = set(rhs.tables)
+            # Update r_tables aliases.
+            for alias in change_map:
+                if alias in r_tables:
+                    # r_tables may contain entries that have a refcount of 0
+                    # if the query has references to a table that can be
+                    # trimmed because only the foreign key is used.
+                    # We only need to fix the aliases for the tables that
+                    # actually have aliases.
+                    if rhs.alias_refcount[alias]:
+                        r_tables.remove(alias)
+                        r_tables.add(change_map[alias])
+            # Find aliases that are exclusive to rhs or lhs.
+            # These are promoted to outer joins.
+            outer_tables = (l_tables | r_tables) - (l_tables & r_tables)
+            for alias in outer_tables:
+                # Again, some of the tables won't have aliases due to
+                # the trimming of unnecessary tables.
+                if self.alias_refcount.get(alias) or rhs.alias_refcount.get(alias):
                     self.promote_alias(alias, True)
-                    break
 
         # Now relabel a copy of the rhs where-clause and add it to the current
         # one.
         if rhs.where:
-            w = deepcopy(rhs.where)
+            w = copy.deepcopy(rhs.where)
             w.relabel_aliases(change_map)
             if not self.where:
                 # Since 'self' matches everything, add an explicit "include
@@ -482,7 +522,7 @@ class Query(object):
             if isinstance(col, (list, tuple)):
                 self.select.append((change_map.get(col[0], col[0]), col[1]))
             else:
-                item = deepcopy(col)
+                item = copy.deepcopy(col)
                 item.relabel_aliases(change_map)
                 self.select.append(item)
         self.select_fields = rhs.select_fields[:]
@@ -529,7 +569,10 @@ class Query(object):
         columns = set()
         orig_opts = self.model._meta
         seen = {}
-        must_include = {self.model: set([orig_opts.pk])}
+        if orig_opts.proxy:
+            must_include = {orig_opts.proxy_for_model: set([orig_opts.pk])}
+        else:
+            must_include = {self.model: set([orig_opts.pk])}
         for field_name in field_names:
             parts = field_name.split(LOOKUP_SEP)
             cur_model = self.model
@@ -641,7 +684,7 @@ class Query(object):
         False, the join is only promoted if it is nullable, otherwise it is
         always promoted.
 
-        Returns True if the join was promoted.
+        Returns True if the join was promoted by this call.
         """
         if ((unconditional or self.alias_map[alias][NULLABLE]) and
                 self.alias_map[alias][JOIN_TYPE] != self.LOUTER):
@@ -695,11 +738,18 @@ class Query(object):
         # "group by", "where" and "having".
         self.where.relabel_aliases(change_map)
         self.having.relabel_aliases(change_map)
-        for columns in (self.select, self.aggregates.values(), self.group_by or []):
+        for columns in [self.select, self.group_by or []]:
             for pos, col in enumerate(columns):
                 if isinstance(col, (list, tuple)):
                     old_alias = col[0]
                     columns[pos] = (change_map.get(old_alias, old_alias), col[1])
+                else:
+                    col.relabel_aliases(change_map)
+        for mapping in [self.aggregates]:
+            for key, col in mapping.items():
+                if isinstance(col, (list, tuple)):
+                    old_alias = col[0]
+                    mapping[key] = (change_map.get(old_alias, old_alias), col[1])
                 else:
                     col.relabel_aliases(change_map)
 
@@ -902,6 +952,19 @@ class Query(object):
                 self.unref_alias(alias)
         self.included_inherited_models = {}
 
+    def need_force_having(self, q_object):
+        """
+        Returns whether or not all elements of this q_object need to be put
+        together in the HAVING clause.
+        """
+        for child in q_object.children:
+            if isinstance(child, Node):
+                if self.need_force_having(child):
+                    return True
+            else:
+                if child[0].split(LOOKUP_SEP)[0] in self.aggregates:
+                    return True
+        return False
 
     def add_aggregate(self, aggregate, model, alias, is_summary):
         """
@@ -909,8 +972,7 @@ class Query(object):
         """
         opts = model._meta
         field_list = aggregate.lookup.split(LOOKUP_SEP)
-        if (len(field_list) == 1 and
-            aggregate.lookup in self.aggregates.keys()):
+        if len(field_list) == 1 and aggregate.lookup in self.aggregates:
             # Aggregate is over an annotation
             field_name = field_list[0]
             col = field_name
@@ -953,7 +1015,7 @@ class Query(object):
         aggregate.add_to_query(self, alias, col=col, source=source, is_summary=is_summary)
 
     def add_filter(self, filter_expr, connector=AND, negate=False, trim=False,
-            can_reuse=None, process_extras=True):
+            can_reuse=None, process_extras=True, force_having=False):
         """
         Add a single filter to the query. The 'filter_expr' is a pair:
         (filter_string, value). E.g. ('name__contains', 'fred')
@@ -1008,12 +1070,12 @@ class Query(object):
             having_clause = value.contains_aggregate
 
         for alias, aggregate in self.aggregates.items():
-            if alias == parts[0]:
+            if alias in (parts[0], LOOKUP_SEP.join(parts)):
                 entry = self.where_class()
                 entry.add((aggregate, lookup_type, value), AND)
                 if negate:
                     entry.negate()
-                self.having.add(entry, AND)
+                self.having.add(entry, connector)
                 return
 
         opts = self.get_meta()
@@ -1022,12 +1084,16 @@ class Query(object):
 
         try:
             field, target, opts, join_list, last, extra_filters = self.setup_joins(
-                    parts, opts, alias, True, allow_many, can_reuse=can_reuse,
-                    negate=negate, process_extras=process_extras)
+                    parts, opts, alias, True, allow_many, allow_explicit_fk=True,
+                    can_reuse=can_reuse, negate=negate,
+                    process_extras=process_extras)
         except MultiJoin, e:
             self.split_exclude(filter_expr, LOOKUP_SEP.join(parts[:e.level]),
                     can_reuse)
             return
+
+        table_promote = False
+        join_promote = False
 
         if (lookup_type == 'isnull' and value is True and not negate and
                 len(join_list) > 1):
@@ -1035,10 +1101,13 @@ class Query(object):
             # outer joins when creating the join chain. This is only done when
             # needed, as it's less efficient at the database level.
             self.promote_alias_chain(join_list)
+            join_promote = True
 
         # Process the join list to see if we can remove any inner joins from
         # the far end (fewer tables in a query is better).
-        col, alias, join_list = self.trim_joins(target, join_list, last, trim)
+        nonnull_comparison = (lookup_type == 'isnull' and value is False)
+        col, alias, join_list = self.trim_joins(target, join_list, last, trim,
+                nonnull_comparison)
 
         if connector == OR:
             # Some joins may need to be promoted when adding a new filter to a
@@ -1049,21 +1118,33 @@ class Query(object):
             join_it = iter(join_list)
             table_it = iter(self.tables)
             join_it.next(), table_it.next()
-            table_promote = False
-            join_promote = False
+            unconditional = False
             for join in join_it:
                 table = table_it.next()
+                # Once we hit an outer join, all subsequent joins must
+                # also be promoted, regardless of whether they have been
+                # promoted as a result of this pass through the tables.
+                unconditional = (unconditional or
+                    self.alias_map[join][JOIN_TYPE] == self.LOUTER)
                 if join == table and self.alias_refcount[join] > 1:
+                    # We have more than one reference to this join table.
+                    # This means that we are dealing with two different query
+                    # subtrees, so we don't need to do any join promotion.
                     continue
-                join_promote = self.promote_alias(join)
+                join_promote = join_promote or self.promote_alias(join, unconditional)
                 if table != join:
                     table_promote = self.promote_alias(table)
+                # We only get here if we have found a table that exists
+                # in the join list, but isn't on the original tables list.
+                # This means we've reached the point where we only have
+                # new tables, so we can break out of this promotion loop.
                 break
             self.promote_alias_chain(join_it, join_promote)
-            self.promote_alias_chain(table_it, table_promote)
+            self.promote_alias_chain(table_it, table_promote or join_promote)
 
-
-        if having_clause:
+        if having_clause or force_having:
+            if (alias, col) not in self.group_by:
+                self.group_by.append((alias, col))
             self.having.add((Constraint(alias, col, field), lookup_type, value),
                 connector)
         else:
@@ -1078,11 +1159,14 @@ class Query(object):
                         if self.alias_map[alias][JOIN_TYPE] == self.LOUTER:
                             j_col = self.alias_map[alias][RHS_JOIN_COL]
                             entry = self.where_class()
-                            entry.add((Constraint(alias, j_col, None), 'isnull', True), AND)
+                            entry.add(
+                                (Constraint(alias, j_col, None), 'isnull', True),
+                                AND
+                            )
                             entry.negate()
                             self.where.add(entry, AND)
                             break
-                elif not (lookup_type == 'in'
+                if not (lookup_type == 'in'
                             and not hasattr(value, 'as_sql')
                             and not hasattr(value, '_as_sql')
                             and not value) and field.null:
@@ -1099,7 +1183,7 @@ class Query(object):
                 self.add_filter(filter, negate=negate, can_reuse=can_reuse,
                         process_extras=False)
 
-    def add_q(self, q_object, used_aliases=None):
+    def add_q(self, q_object, used_aliases=None, force_having=False):
         """
         Adds a Q-object to the current filter.
 
@@ -1117,16 +1201,25 @@ class Query(object):
             else:
                 subtree = False
             connector = AND
+            if q_object.connector == OR and not force_having:
+                force_having = self.need_force_having(q_object)
             for child in q_object.children:
                 if connector == OR:
                     refcounts_before = self.alias_refcount.copy()
-                self.where.start_subtree(connector)
+                if force_having:
+                    self.having.start_subtree(connector)
+                else:
+                    self.where.start_subtree(connector)
                 if isinstance(child, Node):
-                    self.add_q(child, used_aliases)
+                    self.add_q(child, used_aliases, force_having=force_having)
                 else:
                     self.add_filter(child, connector, q_object.negated,
-                            can_reuse=used_aliases)
-                self.where.end_subtree()
+                            can_reuse=used_aliases, force_having=force_having)
+                if force_having:
+                    self.having.end_subtree()
+                else:
+                    self.where.end_subtree()
+
                 if connector == OR:
                     # Aliases that were newly added or not used at all need to
                     # be promoted to outer joins if they are nullable relations.
@@ -1166,11 +1259,10 @@ class Query(object):
         dupe_set = set()
         exclusions = set()
         extra_filters = []
+        int_alias = None
         for pos, name in enumerate(names):
-            try:
+            if int_alias is not None:
                 exclusions.add(int_alias)
-            except NameError:
-                pass
             exclusions.add(alias)
             last.append(len(joins))
             if name == 'pk':
@@ -1237,12 +1329,14 @@ class Query(object):
                                 to_col2, opts, target) = cached_data
                     else:
                         table1 = field.m2m_db_table()
-                        from_col1 = opts.pk.column
+                        from_col1 = opts.get_field_by_name(
+                            field.m2m_target_field_name())[0].column
                         to_col1 = field.m2m_column_name()
                         opts = field.rel.to._meta
                         table2 = opts.db_table
                         from_col2 = field.m2m_reverse_name()
-                        to_col2 = opts.pk.column
+                        to_col2 = opts.get_field_by_name(
+                            field.m2m_reverse_target_field_name())[0].column
                         target = opts.pk
                         orig_opts._join_cache[name] = (table1, from_col1,
                                 to_col1, table2, from_col2, to_col2, opts,
@@ -1290,12 +1384,14 @@ class Query(object):
                                 to_col2, opts, target) = cached_data
                     else:
                         table1 = field.m2m_db_table()
-                        from_col1 = opts.pk.column
+                        from_col1 = opts.get_field_by_name(
+                            field.m2m_reverse_target_field_name())[0].column
                         to_col1 = field.m2m_reverse_name()
                         opts = orig_field.opts
                         table2 = opts.db_table
                         from_col2 = field.m2m_column_name()
-                        to_col2 = opts.pk.column
+                        to_col2 = opts.get_field_by_name(
+                            field.m2m_target_field_name())[0].column
                         target = opts.pk
                         orig_opts._join_cache[name] = (table1, from_col1,
                                 to_col1, table2, from_col2, to_col2, opts,
@@ -1319,7 +1415,13 @@ class Query(object):
                         table = opts.db_table
                         from_col = local_field.column
                         to_col = field.column
-                        target = opts.pk
+                        # In case of a recursive FK, use the to_field for
+                        # reverse lookups as well
+                        if orig_field.model is local_field.model:
+                            target = opts.get_field_by_name(
+                                field.rel.field_name)[0]
+                        else:
+                            target = opts.pk
                         orig_opts._join_cache[name] = (table, from_col, to_col,
                                 opts, target)
 
@@ -1329,10 +1431,11 @@ class Query(object):
                     joins.append(alias)
 
             for (dupe_opts, dupe_col) in dupe_set:
-                try:
-                    self.update_dupe_avoidance(dupe_opts, dupe_col, int_alias)
-                except NameError:
-                    self.update_dupe_avoidance(dupe_opts, dupe_col, alias)
+                if int_alias is None:
+                    to_avoid = alias
+                else:
+                    to_avoid = int_alias
+                self.update_dupe_avoidance(dupe_opts, dupe_col, to_avoid)
 
         if pos != len(names) - 1:
             if pos == len(names) - 2:
@@ -1342,19 +1445,19 @@ class Query(object):
 
         return field, target, opts, joins, last, extra_filters
 
-    def trim_joins(self, target, join_list, last, trim):
+    def trim_joins(self, target, join_list, last, trim, nonnull_check=False):
         """
         Sometimes joins at the end of a multi-table sequence can be trimmed. If
         the final join is against the same column as we are comparing against,
         and is an inner join, we can go back one step in a join chain and
         compare against the LHS of the join instead (and then repeat the
-        optimization). The result, potentially, involves less table joins.
+        optimization). The result, potentially, involves fewer table joins.
 
         The 'target' parameter is the final field being joined to, 'join_list'
         is the full list of join aliases.
 
         The 'last' list contains offsets into 'join_list', corresponding to
-        each component of the filter.  Many-to-many relations, for example, add
+        each component of the filter. Many-to-many relations, for example, add
         two tables to the join list and we want to deal with both tables the
         same way, so 'last' has an entry for the first of the two tables and
         then the table immediately after the second table, in that case.
@@ -1363,6 +1466,11 @@ class Query(object):
         trimmed before anything. See the documentation of add_filter() for
         details about this.
 
+        The 'nonnull_check' parameter is True when we are using inner joins
+        between tables explicitly to exclude NULL entries. In that case, the
+        tables shouldn't be trimmed, because the very action of joining to them
+        alters the result set.
+
         Returns the final active column and table alias and the new active
         join_list.
         """
@@ -1370,7 +1478,7 @@ class Query(object):
         penultimate = last.pop()
         if penultimate == final:
             penultimate = last.pop()
-        if trim and len(join_list) > 1:
+        if trim and final > 1:
             extra = join_list[penultimate:]
             join_list = join_list[:penultimate]
             final = penultimate
@@ -1383,12 +1491,13 @@ class Query(object):
         alias = join_list[-1]
         while final > 1:
             join = self.alias_map[alias]
-            if col != join[RHS_JOIN_COL] or join[JOIN_TYPE] != self.INNER:
+            if (col != join[RHS_JOIN_COL] or join[JOIN_TYPE] != self.INNER or
+                    nonnull_check):
                 break
             self.unref_alias(alias)
             alias = join[LHS_ALIAS]
             col = join[LHS_JOIN_COL]
-            join_list = join_list[:-1]
+            join_list.pop()
             final -= 1
             if final == penultimate:
                 penultimate = last.pop()
@@ -1419,6 +1528,13 @@ class Query(object):
         query.bump_prefix()
         query.clear_ordering(True)
         query.set_start(prefix)
+        # Adding extra check to make sure the selected field will not be null
+        # since we are adding a IN <subquery> clause. This prevents the
+        # database from tripping over IN (...,NULL,...) selects and returning
+        # nothing
+        alias, col = query.select[0]
+        query.where.add((Constraint(alias, col, None), 'isnull', False), AND)
+
         self.add_filter(('%s__in' % prefix, query), negate=True, trim=True,
                 can_reuse=can_reuse)
 
@@ -1675,13 +1791,18 @@ class Query(object):
         existing immediate values, but respects existing deferrals.)
         """
         existing, defer = self.deferred_loading
+        field_names = set(field_names)
+        if 'pk' in field_names:
+            field_names.remove('pk')
+            field_names.add(self.model._meta.pk.name)
+
         if defer:
             # Remove any existing deferred names from the current set before
             # setting the new names.
-            self.deferred_loading = set(field_names).difference(existing), False
+            self.deferred_loading = field_names.difference(existing), False
         else:
             # Replace any existing "immediate load" field names.
-            self.deferred_loading = set(field_names), False
+            self.deferred_loading = field_names, False
 
     def get_loaded_field_names(self):
         """

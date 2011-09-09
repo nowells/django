@@ -6,7 +6,9 @@ test case that is capable of testing the capabilities of
 the serializers. This includes all valid data values, plus
 forward, backwards and self references.
 """
-
+# This is necessary in Python 2.5 to enable the with statement, in 2.6
+# and up it is no longer necessary.
+from __future__ import with_statement
 
 import datetime
 import decimal
@@ -15,9 +17,9 @@ try:
 except ImportError:
     from StringIO import StringIO
 
-from django.conf import settings
-from django.core import serializers, management
-from django.db import transaction, DEFAULT_DB_ALIAS
+from django.core import serializers
+from django.core.serializers import SerializerDoesNotExist
+from django.db import connection
 from django.test import TestCase
 from django.utils.functional import curry
 
@@ -195,6 +197,8 @@ test_data = [
     #(XX, ImageData
     (data_obj, 90, IPAddressData, "127.0.0.1"),
     (data_obj, 91, IPAddressData, None),
+    (data_obj, 95, GenericIPAddressData, "fe80:1424:2223:6cff:fe8a:2e8a:2151:abcd"),
+    (data_obj, 96, GenericIPAddressData, None),
     (data_obj, 100, NullBooleanData, True),
     (data_obj, 101, NullBooleanData, False),
     (data_obj, 102, NullBooleanData, None),
@@ -222,9 +226,6 @@ The end."""),
     (data_obj, 180, USStateData, "MA"),
     (data_obj, 181, USStateData, None),
     (data_obj, 182, USStateData, ""),
-    (data_obj, 190, XMLData, "<foo></foo>"),
-    (data_obj, 191, XMLData, None),
-    (data_obj, 192, XMLData, ""),
 
     (generic_obj, 200, GenericData, ['Generic Object 1', 'tag1', 'tag2']),
     (generic_obj, 201, GenericData, ['Generic Object 2', 'tag2', 'tag3']),
@@ -300,6 +301,7 @@ The end."""),
     (pk_obj, 682, IntegerPKData, 0),
 #     (XX, ImagePKData
     (pk_obj, 690, IPAddressPKData, "127.0.0.1"),
+    (pk_obj, 695, GenericIPAddressPKData, "fe80:1424:2223:6cff:fe8a:2e8a:2151:abcd"),
     # (pk_obj, 700, NullBooleanPKData, True),
     # (pk_obj, 701, NullBooleanPKData, False),
     (pk_obj, 710, PhonePKData, "212-634-5789"),
@@ -335,7 +337,7 @@ The end."""),
 # Because Oracle treats the empty string as NULL, Oracle is expected to fail
 # when field.empty_strings_allowed is True and the value is None; skip these
 # tests.
-if settings.DATABASES[DEFAULT_DB_ALIAS]['ENGINE'] == 'django.db.backends.oracle':
+if connection.features.interprets_empty_strings_as_nulls:
     test_data = [data for data in test_data
                  if not (data[0] == data_obj and
                          data[2]._meta.get_field('data').empty_strings_allowed and
@@ -344,7 +346,7 @@ if settings.DATABASES[DEFAULT_DB_ALIAS]['ENGINE'] == 'django.db.backends.oracle'
 # Regression test for #8651 -- a FK to an object iwth PK of 0
 # This won't work on MySQL since it won't let you create an object
 # with a primary key of 0,
-if settings.DATABASES[DEFAULT_DB_ALIAS]['ENGINE'] != 'django.db.backends.mysql':
+if connection.features.allows_primary_key_0:
     test_data.extend([
         (data_obj, 0, Anchor, "Anchor 0"),
         (fk_obj, 465, FKData, 0),
@@ -353,7 +355,28 @@ if settings.DATABASES[DEFAULT_DB_ALIAS]['ENGINE'] != 'django.db.backends.mysql':
 # Dynamically create serializer tests to ensure that all
 # registered serializers are automatically tested.
 class SerializerTests(TestCase):
-    pass
+    def test_get_unknown_serializer(self):
+        """
+        #15889: get_serializer('nonsense') raises a SerializerDoesNotExist
+        """
+        with self.assertRaises(SerializerDoesNotExist):
+            serializers.get_serializer("nonsense")
+
+        with self.assertRaises(KeyError):
+            serializers.get_serializer("nonsense")
+
+        # SerializerDoesNotExist is instantiated with the nonexistent format
+        with self.assertRaises(SerializerDoesNotExist) as cm:
+            serializers.get_serializer("nonsense")
+        self.assertEqual(cm.exception.args, ("nonsense",))
+
+    def test_unregister_unkown_serializer(self):
+        with self.assertRaises(SerializerDoesNotExist):
+            serializers.unregister_serializer("nonsense")
+
+    def test_get_unkown_deserializer(self):
+        with self.assertRaises(SerializerDoesNotExist):
+            serializers.get_deserializer("nonsense")
 
 def serializerTest(format, self):
 
@@ -361,7 +384,8 @@ def serializerTest(format, self):
     objects = []
     instance_count = {}
     for (func, pk, klass, datum) in test_data:
-        objects.extend(func[0](pk, klass, datum))
+        with connection.constraint_checks_disabled():
+            objects.extend(func[0](pk, klass, datum))
 
     # Get a count of the number of objects created for each class
     for klass in instance_count:
@@ -384,7 +408,7 @@ def serializerTest(format, self):
     # Assert that the number of objects deserialized is the
     # same as the number that was serialized.
     for klass, count in instance_count.items():
-        self.assertEquals(count, klass.objects.count())
+        self.assertEqual(count, klass.objects.count())
 
 def fieldsTest(format, self):
     obj = ComplexModel(field1='first', field2='second', field3='third')

@@ -4,15 +4,14 @@
 Fixtures are a way of loading data into the database in bulk. Fixure data
 can be stored in any serializable format (including JSON and XML). Fixtures
 are identified by name, and are stored in either a directory named 'fixtures'
-in the application directory, on in one of the directories named in the
+in the application directory, or in one of the directories named in the
 ``FIXTURE_DIRS`` setting.
 """
 
+from django.db import models
 from django.contrib.auth.models import Permission
 from django.contrib.contenttypes import generic
 from django.contrib.contenttypes.models import ContentType
-from django.db import models, DEFAULT_DB_ALIAS
-from django.conf import settings
 
 
 class Category(models.Model):
@@ -71,6 +70,14 @@ class Person(models.Model):
 
     def natural_key(self):
         return (self.name,)
+
+class SpyManager(PersonManager):
+    def get_query_set(self):
+        return super(SpyManager, self).get_query_set().filter(cover_blown=False)
+
+class Spy(Person):
+    objects = SpyManager()
+    cover_blown = models.BooleanField(default=False)
 
 class Visa(models.Model):
     person = models.ForeignKey(Person)

@@ -1,10 +1,6 @@
-.. _ref-unicode:
-
 ============
 Unicode data
 ============
-
-.. versionadded:: 1.0
 
 Django natively supports Unicode data everywhere. Providing your database can
 somehow store the data, you can safely pass around Unicode strings to
@@ -65,7 +61,7 @@ passing them around at will, because ASCII is a subset of UTF-8.
 Don't be fooled into thinking that if your :setting:`DEFAULT_CHARSET` setting is set
 to something other than ``'utf-8'`` you can use that other encoding in your
 bytestrings! :setting:`DEFAULT_CHARSET` only applies to the strings generated as
-the result of template rendering (and e-mail). Django will always assume UTF-8
+the result of template rendering (and email). Django will always assume UTF-8
 encoding for internal bytestrings. The reason for this is that the
 :setting:`DEFAULT_CHARSET` setting is not actually under your control (if you are the
 application developer). It's under the control of the person installing and
@@ -95,7 +91,7 @@ Calling ``unicode()`` with the lazy translation as the argument will generate a
 Unicode string in the current locale.
 
 For more details about lazy translation objects, refer to the
-:ref:`internationalization <topics-i18n>` documentation.
+:doc:`internationalization </topics/i18n/index>` documentation.
 
 Useful utility functions
 ------------------------
@@ -144,19 +140,20 @@ Normally, you'll only need to use ``smart_unicode()``. Call it as early as
 possible on any input data that might be either Unicode or a bytestring, and
 from then on, you can treat the result as always being Unicode.
 
+.. _uri-and-iri-handling:
+
 URI and IRI handling
 ~~~~~~~~~~~~~~~~~~~~
 
 Web frameworks have to deal with URLs (which are a type of IRI_). One
 requirement of URLs is that they are encoded using only ASCII characters.
 However, in an international environment, you might need to construct a
-URL from an IRI_ -- very loosely speaking, a URI that can contain Unicode
+URL from an IRI_ -- very loosely speaking, a URI_ that can contain Unicode
 characters. Quoting and converting an IRI to URI can be a little tricky, so
 Django provides some assistance.
 
     * The function ``django.utils.encoding.iri_to_uri()`` implements the
-      conversion from IRI to URI as required by the specification (`RFC
-      3987`_).
+      conversion from IRI to URI as required by the specification (:rfc:`3987`).
 
     * The functions ``django.utils.http.urlquote()`` and
       ``django.utils.http.urlquote_plus()`` are versions of Python's standard
@@ -205,7 +202,6 @@ double-quoting problems.
 
 .. _URI: http://www.ietf.org/rfc/rfc2396.txt
 .. _IRI: http://www.ietf.org/rfc/rfc3987.txt
-.. _RFC 3987: IRI_
 
 Models
 ======
@@ -308,16 +304,16 @@ A couple of tips to remember when writing your own template tags and filters:
       translation objects into strings. It's easier to work solely with Unicode
       strings at that point.
 
-E-mail
-======
+Email
+=====
 
-Django's e-mail framework (in ``django.core.mail``) supports Unicode
+Django's email framework (in ``django.core.mail``) supports Unicode
 transparently. You can use Unicode data in the message bodies and any headers.
-However, you're still obligated to respect the requirements of the e-mail
-specifications, so, for example, e-mail addresses should use only ASCII
+However, you're still obligated to respect the requirements of the email
+specifications, so, for example, email addresses should use only ASCII
 characters.
 
-The following code example demonstrates that everything except e-mail addresses
+The following code example demonstrates that everything except email addresses
 can be non-ASCII::
 
     from django.core.mail import EmailMessage

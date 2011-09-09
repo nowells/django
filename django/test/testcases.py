@@ -1,23 +1,30 @@
+from __future__ import with_statement
+
 import re
-import unittest
+import sys
+from functools import wraps
 from urlparse import urlsplit, urlunsplit
 from xml.dom.minidom import parseString, Node
 
 from django.conf import settings
 from django.core import mail
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
+from django.core.signals import request_started
 from django.core.urlresolvers import clear_url_caches
-from django.db import transaction, connections, DEFAULT_DB_ALIAS
+from django.core.validators import EMPTY_VALUES
+from django.db import (transaction, connection, connections, DEFAULT_DB_ALIAS,
+    reset_queries)
+from django.forms.fields import CharField
 from django.http import QueryDict
 from django.test import _doctest as doctest
 from django.test.client import Client
-from django.utils import simplejson
+from django.test.utils import get_warnings_state, restore_warnings_state, override_settings
+from django.utils import simplejson, unittest as ut2
 from django.utils.encoding import smart_str
 
-try:
-    all
-except NameError:
-    from django.utils.itercompat import all
+__all__ = ('DocTestRunner', 'OutputChecker', 'TestCase', 'TransactionTestCase',
+           'SimpleTestCase', 'skipIfDBFeature', 'skipUnlessDBFeature')
 
 normalize_long_ints = lambda s: re.sub(r'(?<![\w])(\d+)L(?![\w])', '\\1', s)
 normalize_decimals = lambda s: re.sub(r"Decimal\('(\d+(\.\d*)?)'\)", lambda m: "Decimal(\"%s\")" % m.groups()[0], s)
@@ -37,8 +44,6 @@ real_commit = transaction.commit
 real_rollback = transaction.rollback
 real_enter_transaction_management = transaction.enter_transaction_management
 real_leave_transaction_management = transaction.leave_transaction_management
-real_savepoint_commit = transaction.savepoint_commit
-real_savepoint_rollback = transaction.savepoint_rollback
 real_managed = transaction.managed
 
 def nop(*args, **kwargs):
@@ -47,8 +52,6 @@ def nop(*args, **kwargs):
 def disable_transaction_methods():
     transaction.commit = nop
     transaction.rollback = nop
-    transaction.savepoint_commit = nop
-    transaction.savepoint_rollback = nop
     transaction.enter_transaction_management = nop
     transaction.leave_transaction_management = nop
     transaction.managed = nop
@@ -56,8 +59,6 @@ def disable_transaction_methods():
 def restore_transaction_methods():
     transaction.commit = real_commit
     transaction.rollback = real_rollback
-    transaction.savepoint_commit = real_savepoint_commit
-    transaction.savepoint_rollback = real_savepoint_rollback
     transaction.enter_transaction_management = real_enter_transaction_management
     transaction.leave_transaction_management = real_leave_transaction_management
     transaction.managed = real_managed
@@ -209,7 +210,122 @@ class DocTestRunner(doctest.DocTestRunner):
         for conn in connections:
             transaction.rollback_unless_managed(using=conn)
 
-class TransactionTestCase(unittest.TestCase):
+class _AssertNumQueriesContext(object):
+    def __init__(self, test_case, num, connection):
+        self.test_case = test_case
+        self.num = num
+        self.connection = connection
+
+    def __enter__(self):
+        self.old_debug_cursor = self.connection.use_debug_cursor
+        self.connection.use_debug_cursor = True
+        self.starting_queries = len(self.connection.queries)
+        request_started.disconnect(reset_queries)
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.connection.use_debug_cursor = self.old_debug_cursor
+        request_started.connect(reset_queries)
+        if exc_type is not None:
+            return
+
+        final_queries = len(self.connection.queries)
+        executed = final_queries - self.starting_queries
+
+        self.test_case.assertEqual(
+            executed, self.num, "%d queries executed, %d expected" % (
+                executed, self.num
+            )
+        )
+
+class SimpleTestCase(ut2.TestCase):
+
+    def save_warnings_state(self):
+        """
+        Saves the state of the warnings module
+        """
+        self._warnings_state = get_warnings_state()
+
+    def restore_warnings_state(self):
+        """
+        Restores the sate of the warnings module to the state
+        saved by save_warnings_state()
+        """
+        restore_warnings_state(self._warnings_state)
+
+    def settings(self, **kwargs):
+        """
+        A context manager that temporarily sets a setting and reverts
+        back to the original value when exiting the context.
+        """
+        return override_settings(**kwargs)
+
+    def assertRaisesMessage(self, expected_exception, expected_message,
+                           callable_obj=None, *args, **kwargs):
+        """Asserts that the message in a raised exception matches the passe value.
+
+        Args:
+            expected_exception: Exception class expected to be raised.
+            expected_message: expected error message string value.
+            callable_obj: Function to be called.
+            args: Extra args.
+            kwargs: Extra kwargs.
+        """
+        return self.assertRaisesRegexp(expected_exception,
+                re.escape(expected_message), callable_obj, *args, **kwargs)
+
+    def assertFieldOutput(self, fieldclass, valid, invalid, field_args=None,
+            field_kwargs=None, empty_value=u''):
+        """
+        Asserts that a form field behaves correctly with various inputs.
+
+        Args:
+            fieldclass: the class of the field to be tested.
+            valid: a dictionary mapping valid inputs to their expected
+                    cleaned values.
+            invalid: a dictionary mapping invalid inputs to one or more
+                    raised error messages.
+            field_args: the args passed to instantiate the field
+            field_kwargs: the kwargs passed to instantiate the field
+            empty_value: the expected clean output for inputs in EMPTY_VALUES
+
+        """
+        if field_args is None:
+            field_args = []
+        if field_kwargs is None:
+            field_kwargs = {}
+        required = fieldclass(*field_args, **field_kwargs)
+        optional = fieldclass(*field_args, **dict(field_kwargs, required=False))
+        # test valid inputs
+        for input, output in valid.items():
+            self.assertEqual(required.clean(input), output)
+            self.assertEqual(optional.clean(input), output)
+        # test invalid inputs
+        for input, errors in invalid.items():
+            with self.assertRaises(ValidationError) as context_manager:
+                required.clean(input)
+            self.assertEqual(context_manager.exception.messages, errors)
+
+            with self.assertRaises(ValidationError) as context_manager:
+                optional.clean(input)
+            self.assertEqual(context_manager.exception.messages, errors)
+        # test required inputs
+        error_required = [u'This field is required.']
+        for e in EMPTY_VALUES:
+            with self.assertRaises(ValidationError) as context_manager:
+                required.clean(e)
+            self.assertEqual(context_manager.exception.messages, error_required)
+            self.assertEqual(optional.clean(e), empty_value)
+        # test that max_length and min_length are always accepted
+        if issubclass(fieldclass, CharField):
+            field_kwargs.update({'min_length':2, 'max_length':20})
+            self.assertTrue(isinstance(fieldclass(*field_args, **field_kwargs), fieldclass))
+
+class TransactionTestCase(SimpleTestCase):
+    # The class we'll use for the test client self.client.
+    # Can be overridden in derived classes.
+    client_class = Client
+
     def _pre_setup(self):
         """Performs any pre-test setup. This includes:
 
@@ -251,32 +367,47 @@ class TransactionTestCase(unittest.TestCase):
         set up. This means that user-defined Test Cases aren't required to
         include a call to super().setUp().
         """
-        self.client = Client()
-        try:
-            self._pre_setup()
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except Exception:
-            import sys
-            result.addError(self, sys.exc_info())
-            return
+        testMethod = getattr(self, self._testMethodName)
+        skipped = (getattr(self.__class__, "__unittest_skip__", False) or
+            getattr(testMethod, "__unittest_skip__", False))
+
+        if not skipped:
+            self.client = self.client_class()
+            try:
+                self._pre_setup()
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception:
+                result.addError(self, sys.exc_info())
+                return
         super(TransactionTestCase, self).__call__(result)
-        try:
-            self._post_teardown()
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except Exception:
-            import sys
-            result.addError(self, sys.exc_info())
-            return
+        if not skipped:
+            try:
+                self._post_teardown()
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception:
+                result.addError(self, sys.exc_info())
+                return
 
     def _post_teardown(self):
         """ Performs any post-test things. This includes:
 
             * Putting back the original ROOT_URLCONF if it was changed.
+            * Force closing the connection, so that the next test gets
+              a clean cursor.
         """
         self._fixture_teardown()
         self._urlconf_teardown()
+        # Some DB cursors include SQL statements as part of cursor
+        # creation. If you have a test that does rollback, the effect
+        # of these statements is lost, which can effect the operation
+        # of tests (e.g., losing a timezone setting causing objects to
+        # be created with the wrong time).
+        # To make sure this doesn't happen, get a clean connection at the
+        # start of every test.
+        for conn in connections.all():
+            conn.close()
 
     def _fixture_teardown(self):
         pass
@@ -299,7 +430,7 @@ class TransactionTestCase(unittest.TestCase):
 
         if hasattr(response, 'redirect_chain'):
             # The request was a followed redirect
-            self.failUnless(len(response.redirect_chain) > 0,
+            self.assertTrue(len(response.redirect_chain) > 0,
                 msg_prefix + "Response didn't redirect as expected: Response"
                 " code was %d (expected %d)" %
                     (response.status_code, status_code))
@@ -366,7 +497,7 @@ class TransactionTestCase(unittest.TestCase):
                 msg_prefix + "Found %d instances of '%s' in response"
                 " (expected %d)" % (real_count, text, count))
         else:
-            self.failUnless(real_count != 0,
+            self.assertTrue(real_count != 0,
                 msg_prefix + "Couldn't find '%s' in response" % text)
 
     def assertNotContains(self, response, text, status_code=200,
@@ -413,7 +544,7 @@ class TransactionTestCase(unittest.TestCase):
                 if field:
                     if field in context[form].errors:
                         field_errors = context[form].errors[field]
-                        self.failUnless(err in field_errors,
+                        self.assertTrue(err in field_errors,
                             msg_prefix + "The field '%s' on form '%s' in"
                             " context %d does not contain the error '%s'"
                             " (actual errors: %s)" %
@@ -428,7 +559,7 @@ class TransactionTestCase(unittest.TestCase):
                                       (form, i, field))
                 else:
                     non_field_errors = context[form].non_field_errors()
-                    self.failUnless(err in non_field_errors,
+                    self.assertTrue(err in non_field_errors,
                         msg_prefix + "The form '%s' in context %d does not"
                         " contain the non-field error '%s'"
                         " (actual errors: %s)" %
@@ -445,10 +576,10 @@ class TransactionTestCase(unittest.TestCase):
         if msg_prefix:
             msg_prefix += ": "
 
-        template_names = [t.name for t in to_list(response.template)]
+        template_names = [t.name for t in response.templates]
         if not template_names:
             self.fail(msg_prefix + "No templates used to render the response")
-        self.failUnless(template_name in template_names,
+        self.assertTrue(template_name in template_names,
             msg_prefix + "Template '%s' was not a template used to render"
             " the response. Actual template(s) used: %s" %
                 (template_name, u', '.join(template_names)))
@@ -461,21 +592,32 @@ class TransactionTestCase(unittest.TestCase):
         if msg_prefix:
             msg_prefix += ": "
 
-        template_names = [t.name for t in to_list(response.template)]
-        self.failIf(template_name in template_names,
+        template_names = [t.name for t in response.templates]
+        self.assertFalse(template_name in template_names,
             msg_prefix + "Template '%s' was used unexpectedly in rendering"
             " the response" % template_name)
 
-    def assertQuerysetEqual(self, qs, values, transform=repr):
+    def assertQuerysetEqual(self, qs, values, transform=repr, ordered=True):
+        if not ordered:
+            return self.assertEqual(set(map(transform, qs)), set(values))
         return self.assertEqual(map(transform, qs), values)
+
+    def assertNumQueries(self, num, func=None, *args, **kwargs):
+        using = kwargs.pop("using", DEFAULT_DB_ALIAS)
+        conn = connections[using]
+
+        context = _AssertNumQueriesContext(self, num, conn)
+        if func is None:
+            return context
+
+        with context:
+            func(*args, **kwargs)
 
 def connections_support_transactions():
     """
-    Returns True if all connections support transactions.  This is messy
-    because 2.4 doesn't support any or all.
+    Returns True if all connections support transactions.
     """
-    return all(conn.settings_dict['SUPPORTS_TRANSACTIONS']
-        for conn in connections.all())
+    return all(conn.features.supports_transactions for conn in connections.all())
 
 class TestCase(TransactionTestCase):
     """
@@ -528,5 +670,27 @@ class TestCase(TransactionTestCase):
             transaction.rollback(using=db)
             transaction.leave_transaction_management(using=db)
 
-        for connection in connections.all():
-            connection.close()
+def _deferredSkip(condition, reason):
+    def decorator(test_func):
+        if not (isinstance(test_func, type) and issubclass(test_func, TestCase)):
+            @wraps(test_func)
+            def skip_wrapper(*args, **kwargs):
+                if condition():
+                    raise ut2.SkipTest(reason)
+                return test_func(*args, **kwargs)
+            test_item = skip_wrapper
+        else:
+            test_item = test_func
+        test_item.__unittest_skip_why__ = reason
+        return test_item
+    return decorator
+
+def skipIfDBFeature(feature):
+    "Skip a test if a database has the named feature"
+    return _deferredSkip(lambda: getattr(connection.features, feature),
+                         "Database has feature %s" % feature)
+
+def skipUnlessDBFeature(feature):
+    "Skip a test unless a database has the named feature"
+    return _deferredSkip(lambda: not getattr(connection.features, feature),
+                         "Database doesn't support feature %s" % feature)

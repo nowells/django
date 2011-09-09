@@ -1,14 +1,10 @@
-.. _topics-db-aggregation:
-
 ===========
 Aggregation
 ===========
 
-.. versionadded:: 1.1
-
 .. currentmodule:: django.db.models
 
-The topic guide on :ref:`Django's database-abstraction API <topics-db-queries>`
+The topic guide on :doc:`Django's database-abstraction API </topics/db/queries>`
 described the way that you can use Django queries that create,
 retrieve, update and delete individual objects. However, sometimes you will
 need to retrieve values that are derived by summarizing or *aggregating* a
@@ -237,7 +233,7 @@ the first query will provide the total number of all books published by the
 publisher; the second query will only include good books in the annotated
 count. In the first query, the annotation precedes the filter, so the
 filter has no effect on the annotation. In the second query, the filter
-preceeds the annotation, and as a result, the filter constrains the objects
+precedes the annotation, and as a result, the filter constrains the objects
 considered when calculating the annotation.
 
 ``order_by()``
@@ -363,7 +359,7 @@ you also select in a ``values()`` call.
     for you. The main reason is consistency with ``distinct()`` and other
     places: Django **never** removes ordering constraints that you have
     specified (and we can't change those other methods' behavior, as that
-    would violate our :ref:`misc-api-stability` policy).
+    would violate our :doc:`/misc/api-stability` policy).
 
 Aggregating annotations
 -----------------------

@@ -1,10 +1,11 @@
 """
 Tests for django.core.servers.
 """
-
 import os
+from urlparse import urljoin
 
 import django
+from django.conf import settings
 from django.test import TestCase
 from django.core.handlers.wsgi import WSGIHandler
 from django.core.servers.basehttp import AdminMediaHandler
@@ -13,18 +14,20 @@ from django.core.servers.basehttp import AdminMediaHandler
 class AdminMediaHandlerTests(TestCase):
 
     def setUp(self):
-        self.admin_media_file_path = \
-            os.path.join(django.__path__[0], 'contrib', 'admin', 'media')
+        self.admin_media_url = urljoin(settings.STATIC_URL, 'admin/')
+        self.admin_media_file_path = os.path.abspath(
+            os.path.join(django.__path__[0], 'contrib', 'admin', 'static', 'admin')
+        )
         self.handler = AdminMediaHandler(WSGIHandler())
 
     def test_media_urls(self):
         """
         Tests that URLs that look like absolute file paths after the
-        settings.ADMIN_MEDIA_PREFIX don't turn into absolute file paths.
+        settings.STATIC_URL don't turn into absolute file paths.
         """
         # Cases that should work on all platforms.
         data = (
-            ('/media/css/base.css', ('css', 'base.css')),
+            ('%scss/base.css' % self.admin_media_url, ('css', 'base.css')),
         )
         # Cases that should raise an exception.
         bad_data = ()
@@ -33,19 +36,19 @@ class AdminMediaHandlerTests(TestCase):
         if os.sep == '/':
             data += (
                 # URL, tuple of relative path parts.
-                ('/media/\\css/base.css', ('\\css', 'base.css')),
+                ('%s\\css/base.css' % self.admin_media_url, ('\\css', 'base.css')),
             )
             bad_data += (
-                '/media//css/base.css',
-                '/media////css/base.css',
-                '/media/../css/base.css',
+                '%s/css/base.css' % self.admin_media_url,
+                '%s///css/base.css' % self.admin_media_url,
+                '%s../css/base.css' % self.admin_media_url,
             )
         elif os.sep == '\\':
             bad_data += (
-                '/media/C:\css/base.css',
-                '/media//\\css/base.css',
-                '/media/\\css/base.css',
-                '/media/\\\\css/base.css'
+                '%sC:\css/base.css' % self.admin_media_url,
+                '%s/\\css/base.css' % self.admin_media_url,
+                '%s\\css/base.css' % self.admin_media_url,
+                '%s\\\\css/base.css' % self.admin_media_url
             )
         for url, path_tuple in data:
             try:

@@ -1,5 +1,3 @@
-.. _topics-db-managers:
-
 ========
 Managers
 ========
@@ -12,7 +10,7 @@ A ``Manager`` is the interface through which database query operations are
 provided to Django models. At least one ``Manager`` exists for every model in
 a Django application.
 
-The way ``Manager`` classes work is documented in :ref:`topics-db-queries`;
+The way ``Manager`` classes work is documented in :doc:`/topics/db/queries`;
 this document specifically touches on model options that customize ``Manager``
 behavior.
 
@@ -276,9 +274,31 @@ it into the inheritance hierarchy *after* the defaults::
         # Default manager is CustomManager, but OtherManager is
         # also available via the "extra_manager" attribute.
 
+Implementation concerns
+-----------------------
+
+Whatever features you add to your custom ``Manager``, it must be
+possible to make a shallow copy of a ``Manager`` instance; i.e., the
+following code must work::
+
+    >>> import copy
+    >>> manager = MyManager()
+    >>> my_copy = copy.copy(manager)
+
+Django makes shallow copies of manager objects during certain queries;
+if your Manager cannot be copied, those queries will fail.
+
+This won't be an issue for most custom managers. If you are just
+adding simple methods to your ``Manager``, it is unlikely that you
+will inadvertently make instances of your ``Manager`` uncopyable.
+However, if you're overriding ``__getattr__`` or some other private
+method of your ``Manager`` object that controls object state, you
+should ensure that you don't affect the ability of your ``Manager`` to
+be copied.
+
 .. _manager-types:
 
-Controlling Automatic Manager Types
+Controlling automatic Manager types
 ===================================
 
 This document has already mentioned a couple of places where Django creates a
@@ -325,10 +345,10 @@ it will use :class:`django.db.models.Manager`.
     attribute only controlled the type of manager used for related field
     access, which is where the name came from. As it became clear the concept
     was more broadly useful, the name hasn't been changed. This is primarily
-    so that existing code will :ref:`continue to work <misc-api-stability>` in
+    so that existing code will :doc:`continue to work </misc/api-stability>` in
     future Django versions.
 
-Writing Correct Managers For Use In Automatic Manager Instances
+Writing correct Managers for use in automatic Manager instances
 ---------------------------------------------------------------
 
 As already suggested by the `django.contrib.gis` example, above, the
@@ -351,9 +371,9 @@ in ``get_query_set()`` is not appropriate for use as an automatic manager.
 Set ``use_for_related_fields`` when you define the class
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The ``use_for_related_fields`` attribute must be set on the manager *class*,
-object not on an *instance* of the class. The earlier example shows the
-correct way to set it, whereas the following will not work::
+The ``use_for_related_fields`` attribute must be set on the manager *class*, not
+on an *instance* of the class. The earlier example shows the correct way to set
+it, whereas the following will not work::
 
     # BAD: Incorrect code
     class MyManager(models.Manager):

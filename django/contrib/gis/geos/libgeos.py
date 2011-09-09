@@ -6,7 +6,9 @@
  This module also houses GEOS Pointer utilities, including
  get_pointer_arr(), and GEOM_PTR.
 """
-import os, re, sys
+import os
+import re
+import sys
 from ctypes import c_char_p, Structure, CDLL, CFUNCTYPE, POINTER
 from ctypes.util import find_library
 from django.contrib.gis.geos.error import GEOSException
@@ -23,7 +25,7 @@ if lib_path:
     lib_names = None
 elif os.name == 'nt':
     # Windows NT libraries
-    lib_names = ['libgeos_c-1']
+    lib_names = ['geos_c', 'libgeos_c-1']
 elif os.name == 'posix':
     # *NIX libraries
     lib_names = ['geos_c', 'GEOS']

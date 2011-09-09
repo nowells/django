@@ -1,11 +1,13 @@
 from django.core.exceptions import FieldError
 from django.db import connections
+from django.db import transaction
 from django.db.backends.util import truncate_name
 from django.db.models.sql.constants import *
 from django.db.models.sql.datastructures import EmptyResultSet
 from django.db.models.sql.expressions import SQLEvaluator
-from django.db.models.sql.query import get_proxied_model, get_order_dir, \
-     select_related_descend, Query
+from django.db.models.sql.query import (get_proxied_model, get_order_dir,
+     select_related_descend, Query)
+from django.db.utils import DatabaseError
 
 class SQLCompiler(object):
     def __init__(self, query, connection, using):
@@ -52,6 +54,9 @@ class SQLCompiler(object):
         If 'with_limits' is False, any limit/offset information is not included
         in the query.
         """
+        if with_limits and self.query.low_mark == self.query.high_mark:
+            return '', ()
+
         self.pre_sql_setup()
         out_cols = self.get_columns(with_col_aliases)
         ordering, ordering_group_by = self.get_ordering()
@@ -114,6 +119,14 @@ class SQLCompiler(object):
                         result.append('LIMIT %d' % val)
                 result.append('OFFSET %d' % self.query.low_mark)
 
+        if self.query.select_for_update and self.connection.features.has_select_for_update:
+            # If we've been asked for a NOWAIT query but the backend does not support it,
+            # raise a DatabaseError otherwise we could get an unexpected deadlock.
+            nowait = self.query.select_for_update_nowait
+            if nowait and not self.connection.features.has_select_for_update_nowait:
+                raise DatabaseError('NOWAIT is not supported on this database backend.')
+            result.append(self.connection.ops.for_update_sql(nowait=nowait))
+
         return ' '.join(result), tuple(params)
 
     def as_nested_sql(self):
@@ -156,7 +169,7 @@ class SQLCompiler(object):
                 if isinstance(col, (list, tuple)):
                     alias, column = col
                     table = self.query.alias_map[alias][TABLE_NAME]
-                    if table in only_load and col not in only_load[table]:
+                    if table in only_load and column not in only_load[table]:
                         continue
                     r = '%s.%s' % (qn(alias), qn(column))
                     if with_aliases:
@@ -327,7 +340,7 @@ class SQLCompiler(object):
                 continue
             col, order = get_order_dir(field, asc)
             if col in self.query.aggregate_select:
-                result.append('%s %s' % (col, order))
+                result.append('%s %s' % (qn(col), order))
                 continue
             if '.' in field:
                 # This came in through an extra(order_by=...) addition. Pass it
@@ -466,9 +479,11 @@ class SQLCompiler(object):
         qn = self.quote_name_unless_alias
         result, params = [], []
         if self.query.group_by is not None:
-            if len(self.query.model._meta.fields) == len(self.query.select) and \
-                self.connection.features.allows_group_by_pk:
-                self.query.group_by = [(self.query.model._meta.db_table, self.query.model._meta.pk.column)]
+            if (len(self.query.model._meta.fields) == len(self.query.select) and
+                self.connection.features.allows_group_by_pk):
+                self.query.group_by = [
+                    (self.query.model._meta.db_table, self.query.model._meta.pk.column)
+                ]
 
             group_by = self.query.group_by or []
 
@@ -476,11 +491,17 @@ class SQLCompiler(object):
             for extra_select, extra_params in self.query.extra_select.itervalues():
                 extra_selects.append(extra_select)
                 params.extend(extra_params)
-            for col in group_by + self.query.related_select_cols + extra_selects:
+            cols = (group_by + self.query.select +
+                self.query.related_select_cols + extra_selects)
+            seen = set()
+            for col in cols:
+                if col in seen:
+                    continue
+                seen.add(col)
                 if isinstance(col, (list, tuple)):
                     result.append('%s.%s' % (qn(col[0]), qn(col[1])))
                 elif hasattr(col, 'as_sql'):
-                    result.append(col.as_sql(qn))
+                    result.append(col.as_sql(qn, self.connection))
                 else:
                     result.append('(%s)' % str(col))
         return result, params
@@ -669,6 +690,12 @@ class SQLCompiler(object):
         """
         resolve_columns = hasattr(self, 'resolve_columns')
         fields = None
+        has_aggregate_select = bool(self.query.aggregate_select)
+        # Set transaction dirty if we're using SELECT FOR UPDATE to ensure
+        # a subsequent commit/rollback is executed, so any database locks
+        # are released.
+        if self.query.select_for_update and transaction.is_managed(self.using):
+            transaction.set_dirty(self.using)
         for rows in self.execute_sql(MULTI):
             for row in rows:
                 if resolve_columns:
@@ -689,7 +716,7 @@ class SQLCompiler(object):
                                       f.column in only_load[db_table]]
                     row = self.resolve_columns(row, fields)
 
-                if self.query.aggregate_select:
+                if has_aggregate_select:
                     aggregate_start = len(self.query.extra_select.keys()) + len(self.query.select)
                     aggregate_end = aggregate_start + len(self.query.aggregate_select)
                     row = tuple(row[:aggregate_start]) + tuple([

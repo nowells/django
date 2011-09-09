@@ -1,9 +1,11 @@
-from regressiontests.comment_tests.tests import CommentTestCase, CT, Site
-from django.contrib.comments.forms import CommentForm
-from django.contrib.comments.models import Comment
-from django.contrib.comments.moderation import moderator, CommentModerator, AlreadyModerated
-from regressiontests.comment_tests.models import Entry
 from django.core import mail
+
+from django.contrib.comments.models import Comment
+from django.contrib.comments.moderation import (moderator, CommentModerator,
+                                                AlreadyModerated)
+
+from regressiontests.comment_tests.models import Entry
+from regressiontests.comment_tests.tests import CommentTestCase
 
 class EntryModerator1(CommentModerator):
     email_notification = True
@@ -18,6 +20,14 @@ class EntryModerator3(CommentModerator):
 class EntryModerator4(CommentModerator):
     auto_moderate_field = 'pub_date'
     moderate_after = 7
+
+class EntryModerator5(CommentModerator):
+    auto_moderate_field = 'pub_date'
+    moderate_after = 0
+
+class EntryModerator6(CommentModerator):
+    auto_close_field = 'pub_date'
+    close_after = 0
 
 class CommentUtilsModeratorTests(CommentTestCase):
     fixtures = ["comment_utils.xml"]
@@ -57,19 +67,29 @@ class CommentUtilsModeratorTests(CommentTestCase):
     def testEmailNotification(self):
         moderator.register(Entry, EntryModerator1)
         self.createSomeComments()
-        self.assertEquals(len(mail.outbox), 2)
+        self.assertEqual(len(mail.outbox), 2)
 
     def testCommentsEnabled(self):
         moderator.register(Entry, EntryModerator2)
         self.createSomeComments()
-        self.assertEquals(Comment.objects.all().count(), 1)
+        self.assertEqual(Comment.objects.all().count(), 1)
 
     def testAutoCloseField(self):
         moderator.register(Entry, EntryModerator3)
         self.createSomeComments()
-        self.assertEquals(Comment.objects.all().count(), 0)
+        self.assertEqual(Comment.objects.all().count(), 0)
 
     def testAutoModerateField(self):
         moderator.register(Entry, EntryModerator4)
         c1, c2 = self.createSomeComments()
-        self.assertEquals(c2.is_public, False)
+        self.assertEqual(c2.is_public, False)
+
+    def testAutoModerateFieldImmediate(self):
+        moderator.register(Entry, EntryModerator5)
+        c1, c2 = self.createSomeComments()
+        self.assertEqual(c2.is_public, False)
+
+    def testAutoCloseFieldImmediate(self):
+        moderator.register(Entry, EntryModerator6)
+        c1, c2 = self.createSomeComments()
+        self.assertEqual(Comment.objects.all().count(), 0)
