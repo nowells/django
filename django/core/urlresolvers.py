@@ -342,31 +342,24 @@ class RegexURLResolver(LocaleRegexProvider):
         if match:
             new_path = path[match.end():]
             for pattern in self.url_patterns:
+                sub_tried = []
+                sub_matches = []
                 try:
                     if isinstance(pattern, RegexURLResolver):
-                        sub_tried = []
                         sub_matches = pattern.backtracking_resolve(new_path, sub_tried)
-                        if sub_matches:
-                            for sub_match in sub_matches:
-                                sub_match_dict = dict([(smart_str(k), v) for k, v in match.groupdict().items()])
-                                sub_match_dict.update(self.default_kwargs)
-                                for k, v in sub_match.kwargs.iteritems():
-                                    sub_match_dict[smart_str(k)] = v
-                                yield ResolverMatch(
-                                        sub_match.func,
-                                        sub_match.args,
-                                        sub_match_dict,
-                                        sub_match.url_name,
-                                        self.app_name or sub_match.app_name,
-                                        [self.namespace] + sub_match.namespaces,
-                                        )
-                        if sub_tried:
-                            tried.extend([[pattern] + t for t in sub_tried])
-                        else:
-                            tried.append([pattern])
                     else:
                         sub_match = pattern.resolve(new_path)
                         if sub_match:
+                            sub_matches = [sub_match]
+                except Resolver404, e:
+                    sub_tried = e.args[0].get('tried')
+                    if sub_tried is not None:
+                        tried.extend([[pattern] + t for t in sub_tried])
+                    else:
+                        tried.append([pattern])
+                else:
+                    if sub_matches:
+                        for sub_match in sub_matches:
                             sub_match_dict = dict([(smart_str(k), v) for k, v in match.groupdict().items()])
                             sub_match_dict.update(self.default_kwargs)
                             for k, v in sub_match.kwargs.iteritems():
@@ -379,10 +372,7 @@ class RegexURLResolver(LocaleRegexProvider):
                                     self.app_name or sub_match.app_name,
                                     [self.namespace] + sub_match.namespaces,
                                     )
-                        tried.append([pattern])
-                except Resolver404, e:
-                    sub_tried = e.args[0].get('tried')
-                    if sub_tried is not None:
+                    if sub_tried:
                         tried.extend([[pattern] + t for t in sub_tried])
                     else:
                         tried.append([pattern])
