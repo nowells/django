@@ -110,8 +110,8 @@ class BaseHandler(object):
                             try:
                                 response = callback(request, *callback_args, **callback_kwargs)
                                 break
-                            except urlresolvers.Resolver404:
-                                # If the URL resolver candidate raised a Resolver404,
+                            except urlresolvers.ContinueResolving:
+                                # If the URL resolver candidate raised a ContinueResolving,
                                 # allow the URL resolver to pick up where it left off
                                 continue
                             except Exception, e:
@@ -127,7 +127,7 @@ class BaseHandler(object):
 
                         # We need to ensure that we break out of the URL resolver
                         # search loop, since we found a URL resolver match
-                        # but the matched view did not raise a Resolver404 exception
+                        # but the matched view did not raise a ContinueResolving exception
                         # so we want to terminate this search now
                         break
 

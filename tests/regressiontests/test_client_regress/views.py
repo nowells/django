@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
-from django.core.urlresolvers import Resolver404, reverse
+from django.core.urlresolvers import ContinueResolving, reverse
 from django.http import HttpResponse, HttpResponseRedirect
 from django.core.exceptions import SuspiciousOperation
 from django.shortcuts import render_to_response
@@ -14,12 +14,12 @@ from django.template import RequestContext
 def backtracking_resolve_dynamic_capture(request, data):
     if data in ('capture-foo', 'bar-capture',):
         return HttpResponse("Success for backtracking_resolve_dynamic_capture: %s" % data)
-    raise Resolver404
+    raise ContinueResolving
 
 def backtracking_resolve_dynamic_redirect(request, data):
     if data in ('redirect-bar', 'baz-redirect',):
         return HttpResponseRedirect(reverse('arg_view', kwargs={'name': 'test'}))
-    raise Resolver404
+    raise ContinueResolving
 
 def no_template_view(request):
     "A simple view that expects a GET request, and returns a rendered template"
