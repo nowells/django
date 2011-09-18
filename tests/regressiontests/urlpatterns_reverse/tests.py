@@ -173,7 +173,7 @@ class BacktrackingUrlTests(TestCase):
     def test_backtracking_normal_resolve(self):
         r = backtracking_resolve('/backtrack/')
         first = r.next()
-        self.assertEqual(first.func.__name__, 'resolver_404_view')
+        self.assertEqual(first.func.__name__, 'continue_resolving_view')
         second = r.next()
         self.assertEqual(second.func.__name__, 'backtracking_view')
         self.assertRaises(Resolver404, r.next)

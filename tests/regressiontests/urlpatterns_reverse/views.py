@@ -14,7 +14,7 @@ def kwargs_view(request, arg1=1, arg2=2):
 def absolute_kwargs_view(request, arg1=1, arg2=2):
     return HttpResponse('')
 
-def resolver_404_view(request, *args, **kwargs):
+def continue_resolving_view(request, *args, **kwargs):
     raise ContinueResolving
 
 def backtracking_view(request, *args, **kwargs):
