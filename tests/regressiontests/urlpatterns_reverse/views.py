@@ -1,4 +1,4 @@
-from django.core.urlresolvers import Resolver404
+from django.core.urlresolvers import ContinueResolving
 from django.http import HttpResponse
 from django.views.generic import RedirectView
 from django.core.urlresolvers import reverse_lazy
@@ -15,10 +15,10 @@ def absolute_kwargs_view(request, arg1=1, arg2=2):
     return HttpResponse('')
 
 def resolver_404_view(request, *args, **kwargs):
-    raise Resolver404
+    raise ContinueResolving
 
 def backtracking_view(request, *args, **kwargs):
-    pass
+    return HttpResponse('backtracked ok')
 
 def defaults_view(request, arg1, arg2):
     pass

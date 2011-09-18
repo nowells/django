@@ -176,6 +176,11 @@ class BacktrackingUrlTests(TestCase):
         self.assertEqual(first.func.__name__, 'resolver_404_view')
         second = r.next()
         self.assertEqual(second.func.__name__, 'backtracking_view')
+        self.assertRaises(Resolver404, r.next)
+
+        response = self.client.get('/backtrack/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, 'backtracked ok')
 
 class ResolverTests(unittest.TestCase):
     def test_non_regex(self):
